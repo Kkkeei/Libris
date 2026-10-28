@@ -71,6 +71,8 @@ A bibliotecária pode cadastrar alunos e, em seguida, criar acesso individual pe
 - `GET/POST /api/v1/classes` (admin)
 - `GET/POST /api/v1/loans`, `POST /api/v1/loans/{id}/return` (admin)
 - `GET /api/v1/students/me/loans` (aluno autenticado)
+- `GET/POST /api/v1/students/me/loan-requests` (solicitações do próprio aluno)
+- `GET /api/v1/loan-requests` e `POST /api/v1/loan-requests/{id}/confirm|reject` (admin)
 - `POST /api/v1/auth/student-accounts` (admin)
 
 ## Regras e segurança
@@ -80,7 +82,7 @@ A bibliotecária pode cadastrar alunos e, em seguida, criar acesso individual pe
 - Senhas são armazenadas com hash Argon2; tokens têm expiração.
 - SQLite mantém chaves estrangeiras, espera limitada por lock e modo WAL.
 - Cada exemplar possui um código único. Um índice único parcial impede dois empréstimos ativos do mesmo exemplar.
-- O portal permite pesquisar e consultar o próprio histórico. Por segurança operacional, o registro da retirada permanece sob confirmação administrativa: registrar digitalmente um livro não autoriza retirar um exemplar fisicamente.
+- O aluno pode solicitar o registro de um livro que já foi entregue. A solicitação fica pendente e não muda a disponibilidade até a bibliotecária confirmar. Na confirmação, o sistema seleciona um exemplar realmente disponível e registra o empréstimo; uma restrição no SQLite impede emprestar o mesmo exemplar duas vezes. Registrar digitalmente um livro não autoriza retirar um exemplar fisicamente.
 - Não coloque dados reais de alunos no GitHub. Não exponha o sistema na internet sem HTTPS, proteção contra abuso, backups e revisão de LGPD.
 
 ## Backup / restauração

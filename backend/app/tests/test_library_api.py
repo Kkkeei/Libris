@@ -86,3 +86,65 @@ def test_student_can_only_read_own_loan_history(client, db_session):
     student_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     assert client.get("/api/v1/students/me/loans", headers=student_headers).json() == []
     assert client.get("/api/v1/students", headers=student_headers).status_code == 403
+
+
+def test_student_loan_request_stays_pending_until_librarian_confirms(client, db_session):
+    admin_headers = _admin_headers(client, db_session)
+    student = client.post(
+        "/api/v1/students",
+        headers=admin_headers,
+        json={"full_name": "Aluna solicitante", "enrollment_number": "TEST-REQ-001"},
+    ).json()
+    book = client.post(
+        "/api/v1/books",
+        headers=admin_headers,
+        json={"title": "Livro solicitado", "author": "Autoria de teste", "category": "Teste", "copies": 1},
+    ).json()
+    account = client.post(
+        "/api/v1/auth/student-accounts",
+        headers=admin_headers,
+        json={"student_id": student["id"], "username": "aluna001", "password": "Senha-aluna-segura-2026"},
+    )
+    assert account.status_code == 201, account.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "aluna001", "password": "Senha-aluna-segura-2026"},
+    )
+    assert login.status_code == 200, login.text
+    student_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    request = client.post(
+        "/api/v1/students/me/loan-requests",
+        headers=student_headers,
+        json={"book_id": book["id"]},
+    )
+    assert request.status_code == 201, request.text
+    assert request.json()["status"] == "pending"
+    assert client.get("/api/v1/books").json()[0]["available"] == 1
+
+    duplicate = client.post(
+        "/api/v1/students/me/loan-requests",
+        headers=student_headers,
+        json={"book_id": book["id"]},
+    )
+    assert duplicate.status_code == 409
+
+    pending = client.get("/api/v1/loan-requests?status=pending", headers=admin_headers)
+    assert pending.status_code == 200, pending.text
+    assert len(pending.json()) == 1
+    confirmed = client.post(
+        f"/api/v1/loan-requests/{request.json()['id']}/confirm",
+        headers=admin_headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["status"] == "active"
+    assert client.get("/api/v1/books").json()[0]["available"] == 0
+
+    my_requests = client.get("/api/v1/students/me/loan-requests", headers=student_headers)
+    assert my_requests.status_code == 200
+    assert my_requests.json()[0]["status"] == "approved"
+    duplicate_confirmation = client.post(
+        f"/api/v1/loan-requests/{request.json()['id']}/confirm",
+        headers=admin_headers,
+    )
+    assert duplicate_confirmation.status_code == 409

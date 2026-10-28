@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import get_current_user, require_librarian
 from app.db.session import get_db
-from app.models import Book, BookCopy, Loan, SchoolClass, Student, StudentAccount, User
+from app.models import Book, BookCopy, Loan, LoanRequest, SchoolClass, Student, StudentAccount, User
 from app.schemas.library import (
     BookCreate, BookOut, BookUpdate, ClassCreate, ClassOut, DashboardOut,
-    LoanCreate, LoanOut, StudentCreate, StudentOut, StudentUpdate,
+    LoanCreate, LoanOut, LoanRequestCreate, LoanRequestOut, StudentCreate, StudentOut, StudentUpdate,
 )
 
 logger = logging.getLogger("libris.library")
@@ -430,3 +430,202 @@ def my_loans(current_user: User = Depends(get_current_user), db: Session = Depen
         .limit(200)
     )
     return [_loan_out(loan) for loan in db.scalars(stmt).unique().all()]
+
+
+def _loan_request_out(request_obj: LoanRequest) -> LoanRequestOut:
+    return LoanRequestOut(
+        id=request_obj.id,
+        student_id=request_obj.student_id,
+        student=request_obj.student.full_name,
+        registration=request_obj.student.enrollment_number,
+        book_id=request_obj.book_id,
+        book=request_obj.book.title,
+        status=request_obj.status,
+        note=request_obj.note,
+        requested_at=request_obj.requested_at,
+        resolved_at=request_obj.resolved_at,
+    )
+
+
+@student_router.get("/students/me/loan-requests", response_model=list[LoanRequestOut])
+def my_loan_requests(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "student":
+        raise HTTPException(status_code=403, detail="Esta área é exclusiva dos alunos.")
+    link = db.scalar(select(StudentAccount).where(StudentAccount.user_id == current_user.id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Este acesso não está vinculado a um aluno.")
+    stmt = (
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .where(LoanRequest.student_id == link.student_id)
+        .order_by(LoanRequest.requested_at.desc())
+        .limit(100)
+    )
+    return [_loan_request_out(item) for item in db.scalars(stmt).unique().all()]
+
+
+@student_router.post(
+    "/students/me/loan-requests",
+    response_model=LoanRequestOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_my_loan_request(
+    payload: LoanRequestCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "student":
+        raise HTTPException(status_code=403, detail="Esta área é exclusiva dos alunos.")
+    link = db.scalar(select(StudentAccount).where(StudentAccount.user_id == current_user.id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Este acesso não está vinculado a um aluno.")
+    student = db.get(Student, link.student_id)
+    if student is None or not student.is_active:
+        raise HTTPException(status_code=404, detail="Cadastro de aluno inativo ou não encontrado.")
+    book = db.get(Book, payload.book_id)
+    if book is None or not book.is_active:
+        raise HTTPException(status_code=404, detail="Livro não encontrado ou inativo.")
+    if _available_copy(db, book.id) is None:
+        raise HTTPException(status_code=409, detail="Não há exemplares disponíveis desse livro no momento.")
+    pending = db.scalar(
+        select(LoanRequest.id).where(
+            LoanRequest.student_id == student.id,
+            LoanRequest.book_id == book.id,
+            LoanRequest.status == "pending",
+        )
+    )
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="Você já possui uma solicitação pendente para esse livro.")
+    request_obj = LoanRequest(
+        student_id=student.id,
+        book_id=book.id,
+        status="pending",
+        note=payload.note.strip() if payload.note and payload.note.strip() else None,
+    )
+    db.add(request_obj)
+    try:
+        db.commit()
+        db.refresh(request_obj)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A solicitação já foi registrada. Atualize a lista antes de tentar novamente.") from exc
+    saved = db.scalar(
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .where(LoanRequest.id == request_obj.id)
+    )
+    return _loan_request_out(saved)
+
+
+@admin_router.get("/loan-requests", response_model=list[LoanRequestOut])
+def list_loan_requests(
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+):
+    stmt = (
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .order_by(LoanRequest.requested_at.desc())
+        .limit(500)
+    )
+    requests = db.scalars(stmt).unique().all()
+    if status_filter:
+        requests = [item for item in requests if item.status == status_filter]
+    return [_loan_request_out(item) for item in requests]
+
+
+@admin_router.post("/loan-requests/{request_id}/confirm", response_model=LoanOut)
+def confirm_loan_request(
+    request_id: int,
+    current_user: User = Depends(require_librarian),
+    db: Session = Depends(get_db),
+):
+    request_obj = db.scalar(
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .where(LoanRequest.id == request_id)
+    )
+    if request_obj is None:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+    if request_obj.status != "pending":
+        raise HTTPException(status_code=409, detail="Esta solicitação já foi resolvida.")
+    student = db.get(Student, request_obj.student_id)
+    book = db.get(Book, request_obj.book_id)
+    if student is None or not student.is_active or book is None or not book.is_active:
+        raise HTTPException(status_code=409, detail="Aluno ou livro inativo; a solicitação não pode ser confirmada.")
+    # Atomically claim the pending request. A concurrent confirmation cannot also win.
+    from sqlalchemy import update
+    claim = db.execute(
+        update(LoanRequest)
+        .where(LoanRequest.id == request_id, LoanRequest.status == "pending")
+        .values(
+            status="approved",
+            resolved_at=datetime.now(timezone.utc),
+            resolved_by_user_id=current_user.id,
+        )
+    )
+    if claim.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Esta solicitação já foi resolvida por outra operação.")
+    copy = _available_copy(db, book.id)
+    if copy is None:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Não há exemplares disponíveis. A solicitação continua pendente.")
+    loan = Loan(
+        student_id=student.id,
+        copy_id=copy.id,
+        due_date=date.today() + timedelta(days=7),
+        status="active",
+        created_by_user_id=current_user.id,
+    )
+    db.add(loan)
+    try:
+        db.commit()
+        db.refresh(loan)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="O exemplar acabou de ser emprestado. Atualize as solicitações.") from exc
+    saved = db.scalar(
+        select(Loan)
+        .options(
+            joinedload(Loan.student).joinedload(Student.school_class),
+            joinedload(Loan.copy).joinedload(BookCopy.book),
+        )
+        .where(Loan.id == loan.id)
+    )
+    return _loan_out(saved)
+
+
+@admin_router.post("/loan-requests/{request_id}/reject", response_model=LoanRequestOut)
+def reject_loan_request(
+    request_id: int,
+    current_user: User = Depends(require_librarian),
+    db: Session = Depends(get_db),
+):
+    request_obj = db.scalar(
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .where(LoanRequest.id == request_id)
+    )
+    if request_obj is None:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada.")
+    if request_obj.status != "pending":
+        raise HTTPException(status_code=409, detail="Esta solicitação já foi resolvida.")
+    request_obj.status = "rejected"
+    request_obj.resolved_at = datetime.now(timezone.utc)
+    request_obj.resolved_by_user_id = current_user.id
+    try:
+        db.commit()
+        db.refresh(request_obj)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Não foi possível registrar a decisão.") from exc
+    saved = db.scalar(
+        select(LoanRequest)
+        .options(joinedload(LoanRequest.student), joinedload(LoanRequest.book))
+        .where(LoanRequest.id == request_obj.id)
+    )
+    return _loan_request_out(saved)
