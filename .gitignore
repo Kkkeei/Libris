@@ -1,6 +1,8 @@
 # Node / Vite
 node_modules/
 dist/
+dist-student/
+dist-admin/
 dist-ssr/
 *.local
 npm-debug.log*

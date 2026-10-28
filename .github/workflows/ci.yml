@@ -2,7 +2,7 @@ name: Libris CI
 
 on:
   push:
-    branches: [main, "fix/**"]
+    branches: [main, "fix/**", "feat/**"]
   pull_request:
     branches: [main]
 
@@ -29,5 +29,6 @@ jobs:
           node-version: "20"
       - run: npm install
       - run: npm run lint
-      - run: npm run build
+      - run: npm run build:student
+      - run: npm run build:admin
       - run: npm run test

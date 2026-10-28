@@ -33,16 +33,30 @@ uvicorn app.main:app --reload
 
 O banco será criado em `data/libris.db` na raiz do repositório. Ele é persistente; não o apague ao reiniciar. A base começa vazia. Se você tinha dados na versão anterior que usava PostgreSQL, eles não são convertidos automaticamente para SQLite; faça uma exportação/importação específica antes de descartar a base antiga.
 
-### Frontend — outro terminal, na raiz
+### Frontends — dois sites independentes, na raiz do projeto
+
+Instale as dependências uma vez:
 ```bash
 npm install
-npm run dev
 ```
 
-Acesse:
-- Catálogo público e portal do aluno: http://localhost:5173/
-- Painel da bibliotecária: http://localhost:5173/entrar-admin
-- Swagger: http://localhost:8000/api/v1/docs
+Abra dois terminais na raiz e execute um comando em cada terminal:
+
+**Site do aluno (catálogo, cadastro e empréstimos):**
+```bash
+npm run dev:student
+```
+Abre em http://localhost:5173/
+
+**Site da bibliotecária (login e administração):**
+```bash
+npm run dev:admin
+```
+Abre em http://localhost:5174/
+
+São duas aplicações de frontend independentes, com builds e URLs separados, mas usam a mesma API e o mesmo banco para compartilhar o catálogo e os registros da biblioteca. Para produção, publique `dist-student` e `dist-admin` como dois sites separados e configure `VITE_API_BASE_URL` e `VITE_ADMIN_SITE_URL` no build de cada site.
+
+Swagger da API: http://localhost:8000/api/v1/docs
 
 ### Windows PowerShell
 ```powershell
@@ -53,7 +67,7 @@ pip install -e ".[test]"
 Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
-Em outro terminal na raiz: `npm install` e `npm run dev`. Antes de iniciar, edite `backend/.env` e defina as duas chaves secretas como descrito acima.
+Em outro terminal na raiz, execute `npm install`; depois abra dois terminais e execute `npm run dev:student` e `npm run dev:admin`. Antes de iniciar, edite `backend/.env` e defina as duas chaves secretas como descrito acima.
 
 ## Acesso pelo celular na mesma rede local
 
@@ -69,7 +83,7 @@ Use isto apenas numa rede Wi-Fi confiável, como a rede interna da escola. Não 
    Edite `.env` e substitua `VITE_API_BASE_URL` pelo IP do computador, por exemplo:
    `VITE_API_BASE_URL=http://192.168.1.50:8000/api/v1`
 3. Em `backend/.env`, ajuste `CORS_ORIGINS` para incluir a origem do frontend usando o mesmo IP, por exemplo:
-   `CORS_ORIGINS=["http://192.168.1.50:5173","http://localhost:5173","http://127.0.0.1:5173"]`
+   `CORS_ORIGINS=["http://192.168.1.50:5173","http://192.168.1.50:5174","http://localhost:5173","http://localhost:5174","http://127.0.0.1:5173","http://127.0.0.1:5174"]`
 4. Inicie o backend aceitando conexões da LAN:
    ```bash
    cd backend
@@ -77,11 +91,12 @@ Use isto apenas numa rede Wi-Fi confiável, como a rede interna da escola. Não 
    uvicorn app.main:app --host 0.0.0.0 --port 8000
    ```
    No Windows, ative `.venv\\Scripts\\Activate.ps1` no PowerShell e execute o mesmo comando `uvicorn`.
-5. Na raiz, inicie o frontend para a rede local:
+5. Na raiz, abra dois terminais e inicie os sites para a rede local:
    ```bash
-   npm run dev -- --host 0.0.0.0
+   npm run dev:student
+   npm run dev:admin
    ```
-6. No celular conectado à mesma rede, abra `http://192.168.1.50:5173` (substitua pelo IP real do computador).
+6. No celular conectado à mesma rede, abra `http://192.168.1.50:5173` para o site do aluno ou `http://192.168.1.50:5174` para o site administrativo (substitua pelo IP real do computador).
 
 Se o firewall bloquear a conexão, permita as portas 5173 e 8000 somente na rede privada/local, de acordo com as regras da escola. O endereço da API no navegador do celular precisa ser o IP do computador, não `localhost`.
 
@@ -89,9 +104,9 @@ Se o firewall bloquear a conexão, permita as portas 5173 e 8000 somente na rede
 
 Com o backend iniciado e `LIBRIS_SETUP_KEY` configurada, abra http://localhost:8000/api/v1/docs e faça POST em `/api/v1/setup/admin`, informando e-mail, nome, uma senha forte de ao menos 12 caracteres e a chave de setup. O endpoint é de uso único e recusa criar outro primeiro administrador se já existir uma conta de bibliotecária.
 
-Depois entre em http://localhost:5173/entrar-admin.
+Depois entre no site administrativo em http://localhost:5174/entrar.
 
-A bibliotecária pode cadastrar alunos e, em seguida, criar acesso individual pela rota protegida `POST /api/v1/auth/student-accounts` no Swagger. O usuário do aluno usa o nome de acesso definido, não o nome/matrícula pública do estudante.
+Os alunos podem criar a própria conta no site público em http://localhost:5173/cadastro, informando nome completo, matrícula, usuário e senha. Matrícula e usuário precisam ser únicos. Para escolas que exigem validação de matrícula, a confirmação do vínculo escolar deve ser adicionada antes de liberar o cadastro para uso real.
 
 ## Rotas principais
 - `GET /api/v1/health`, `GET /api/v1/health/db`
@@ -103,7 +118,8 @@ A bibliotecária pode cadastrar alunos e, em seguida, criar acesso individual pe
 - `GET /api/v1/students/me/loans` (aluno autenticado)
 - `GET/POST /api/v1/students/me/loan-requests` (solicitações do próprio aluno)
 - `GET /api/v1/loan-requests` e `POST /api/v1/loan-requests/{id}/confirm|reject` (admin)
-- `POST /api/v1/auth/student-accounts` (admin)
+- `POST /api/v1/auth/student-accounts` (admin, para contas criadas manualmente)
+- `POST /api/v1/auth/student-register` (cadastro público de aluno)
 
 ## Regras e segurança
 - O catálogo público não retorna matrícula, nomes de alunos nem histórico.
@@ -132,7 +148,8 @@ pytest -v
 Na raiz:
 ```bash
 npm run lint
-npm run build
+npm run build:student
+npm run build:admin
 npm run test
 ```
 

@@ -32,6 +32,15 @@ class AdminUserCreate(BaseModel):
     password: str = Field(min_length=12, max_length=200)
 
 
+
+
+class StudentSelfRegister(BaseModel):
+    full_name: str = Field(min_length=2, max_length=160)
+    enrollment_number: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    password: str = Field(min_length=12, max_length=200)
+
+
 class StudentAccountCreate(BaseModel):
     student_id: int
     username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
@@ -108,3 +117,46 @@ def create_student_account(
         db.rollback()
         raise HTTPException(status_code=409, detail="Não foi possível vincular o acesso.") from exc
     return {"id": user.id, "username": username, "role": user.role, "student_id": student.id}
+
+
+@router.post("/student-register", status_code=status.HTTP_201_CREATED)
+def register_student(
+    payload: StudentSelfRegister,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Public self-registration for a student account.
+    The username and enrollment number must both be unique.
+    """
+    full_name = payload.full_name.strip()
+    enrollment_number = payload.enrollment_number.strip()
+    username = payload.username.strip().lower()
+    if not full_name or not enrollment_number:
+        raise HTTPException(status_code=422, detail="Informe nome completo e matrícula.")
+    if db.scalar(select(Student.id).where(Student.enrollment_number == enrollment_number)):
+        raise HTTPException(status_code=409, detail="Esta matrícula já possui cadastro.")
+    email = f"{username}@student.libris.invalid"
+    if db.scalar(select(User.id).where(User.email == email)):
+        raise HTTPException(status_code=409, detail="Este nome de usuário já está em uso.")
+    student = Student(enrollment_number=enrollment_number, full_name=full_name, is_active=True)
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        full_name=full_name,
+        role="student",
+        is_active=True,
+    )
+    db.add(student)
+    db.add(user)
+    try:
+        db.flush()
+        db.add(StudentAccount(student_id=student.id, user_id=user.id))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Não foi possível concluir o cadastro. Confira a matrícula e o usuário.") from exc
+    return {
+        "created": True,
+        "message": "Cadastro criado. Agora você já pode entrar no portal do aluno.",
+        "username": username,
+    }
