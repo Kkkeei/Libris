@@ -1,129 +1,107 @@
-# Libris — Biblioteca Inteligente (MVP inicial)
+# Libris — Biblioteca Inteligente
 
-Este MVP utiliza dados reais persistidos no PostgreSQL e não cria registros demonstrativos na inicialização. O acervo, alunos, turmas, empréstimos e indicadores são carregados pela API FastAPI. Quando o banco está vazio, as listas ficam vazias e os indicadores ficam em zero.
+O Libris é um sistema web responsivo para biblioteca escolar. Contém um catálogo público mobile-first e uma área administrativa separada para a bibliotecária.
 
-## O que está implementado
+## Stack
+- React + TypeScript + Vite
+- Python + FastAPI + SQLAlchemy
+- SQLite local persistente (sem Docker obrigatório)
+- JWT e hash de senha Argon2
+- pytest para testes da API
 
-- Frontend React + TypeScript + Vite conectado à API.
-- API FastAPI com documentação OpenAPI.
-- PostgreSQL 16 pelo Docker Compose e migrações Alembic.
-- Cadastro/listagem/edição básica de livros (edição por PATCH da API), com geração de exemplares físicos.
-- Cadastro/listagem/edição básica de alunos, matrícula única e vínculo opcional com turma.
-- Cadastro/listagem de turmas por ano letivo.
-- Registro de empréstimo de exemplar disponível, consulta de histórico e devolução.
-- Disponibilidade calculada pelo banco; proteção contra empréstimo simultâneo do mesmo exemplar.
-- Dashboard calculado a partir dos registros reais.
-- Desativação lógica de livros e alunos, sem apagar seu histórico.
-- Testes automatizados da API com banco isolado de testes.
-- Ferramentas para inspecionar e importar futuramente um arquivo SQLite `.db` de origem.
+## Instalar e executar
 
-## Limitações importantes deste MVP
-
-- **Autenticação e permissões ainda não estão implementadas.** A API não deve ser exposta à internet nem usada com dados reais de crianças em rede compartilhada até concluir autenticação, autorização, auditoria, revisão de segurança e política de backup.
-- O frontend já não apresenta login de demonstração nem registros fictícios, mas o ambiente está identificado como local.
-- Ranking, gamificação e gráficos históricos foram retirados desta versão funcional porque não havia registros reais nem regras pedagógicas definidas para sustentá-los.
-- O importador de `.db` usa nomes de tabelas e colunas comuns. O arquivo de origem deve ser inspecionado antes da importação; se o esquema for diferente, o mapeamento deve ser ajustado em vez de adivinhar os campos.
-
-## Requisitos
-
-- Docker Engine e Docker Compose plugin.
-- Node.js 20+ e npm.
-
-## Configuração e execução
-
-Na raiz do projeto:
-
+### Backend — Linux
 ```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
 cp -n .env.example .env
 ```
 
-O exemplo usa a porta externa `5433` para evitar conflito com PostgreSQL instalado no Linux. Se o arquivo `.env` já existir, `cp -n` preserva suas configurações. Confirme que `POSTGRES_PORT=5433` está no `.env` local se a porta 5432 já estiver ocupada. Use uma senha local própria em `POSTGRES_PASSWORD`.
+Edite `backend/.env` e defina:
+- `AUTH_SECRET_KEY`: chave aleatória de pelo menos 32 caracteres.
+- `LIBRIS_SETUP_KEY`: chave de configuração inicial de pelo menos 24 caracteres.
 
-Subir banco e API:
+Gere valores com `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Use valores separados e não compartilhe esses segredos.
 
+Inicie:
 ```bash
-sudo docker compose up --build -d
-sudo docker compose ps
-sudo docker compose logs --tail=80 api
+uvicorn app.main:app --reload
 ```
 
-Verificações:
+O banco será criado em `data/libris.db` na raiz do repositório. Ele é persistente; não o apague ao reiniciar.
 
-- API: <http://localhost:8000/api/v1/health>
-- Banco: <http://localhost:8000/api/v1/health/db>
-- Documentação interativa: <http://localhost:8000/api/v1/docs>
-- Frontend: <http://localhost:5173>
-
-Em outro terminal, na raiz:
-
+### Frontend — outro terminal, na raiz
 ```bash
 npm install
 npm run dev
 ```
 
-Para parar os serviços sem apagar os dados:
+Acesse:
+- Catálogo público e portal do aluno: http://localhost:5173/
+- Painel da bibliotecária: http://localhost:5173/entrar-admin
+- Swagger: http://localhost:8000/api/v1/docs
 
-```bash
-sudo docker compose down
+### Windows PowerShell
+```powershell
+cd backend
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[test]"
+Copy-Item .env.example .env
+uvicorn app.main:app --reload
 ```
+Em outro terminal na raiz: `npm install` e `npm run dev`. Antes de iniciar, edite `backend/.env` e defina as duas chaves secretas como descrito acima.
 
-**Não use `docker compose down -v`** a menos que queira apagar permanentemente o volume do banco local.
+## Primeiro acesso administrativo
+
+Com o backend iniciado e `LIBRIS_SETUP_KEY` configurada, abra http://localhost:8000/api/v1/docs e faça POST em `/api/v1/setup/admin`, informando e-mail, nome, uma senha forte de ao menos 12 caracteres e a chave de setup. O endpoint é de uso único e recusa criar outro primeiro administrador se já existir uma conta de bibliotecária.
+
+Depois entre em http://localhost:5173/entrar-admin.
+
+A bibliotecária pode cadastrar alunos e, em seguida, criar acesso individual pela rota protegida `POST /api/v1/auth/student-accounts` no Swagger. O usuário do aluno usa o nome de acesso definido, não o nome/matrícula pública do estudante.
+
+## Rotas principais
+- `GET /api/v1/health`, `GET /api/v1/health/db`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/books`, `GET /api/v1/books/{id}` (catálogo público)
+- `GET/POST /api/v1/students`, `PATCH /api/v1/students/{id}` (admin)
+- `GET/POST /api/v1/classes` (admin)
+- `GET/POST /api/v1/loans`, `POST /api/v1/loans/{id}/return` (admin)
+- `GET /api/v1/students/me/loans` (aluno autenticado)
+- `POST /api/v1/auth/student-accounts` (admin)
+
+## Regras e segurança
+- O catálogo público não retorna matrícula, nomes de alunos nem histórico.
+- Rotas administrativas exigem token de bibliotecária validado no backend.
+- A área do aluno retorna apenas empréstimos vinculados à conta autenticada.
+- Senhas são armazenadas com hash Argon2; tokens têm expiração.
+- SQLite mantém chaves estrangeiras, espera limitada por lock e modo WAL.
+- Cada exemplar possui um código único. Um índice único parcial impede dois empréstimos ativos do mesmo exemplar.
+- O portal permite pesquisar e consultar o próprio histórico. Por segurança operacional, o registro da retirada permanece sob confirmação administrativa: registrar digitalmente um livro não autoriza retirar um exemplar fisicamente.
+- Não coloque dados reais de alunos no GitHub. Não exponha o sistema na internet sem HTTPS, proteção contra abuso, backups e revisão de LGPD.
+
+## Backup / restauração
+
+Pare a API antes de copiar o banco:
+```bash
+mkdir -p backups
+cp data/libris.db "backups/libris-$(date +%Y%m%d-%H%M%S).db"
+```
+Para restaurar, pare a API e copie o backup desejado para `data/libris.db`. Não modifique o arquivo com o servidor ativo.
 
 ## Testes
-
-Os testes usam SQLite em memória e não alteram o PostgreSQL de desenvolvimento. Dentro do container da API:
-
+No backend:
 ```bash
-sudo docker compose exec api pytest -v
+pytest -v
 ```
-
-Frontend:
-
+Na raiz:
 ```bash
-npm run build
 npm run lint
+npm run build
 npm run test
 ```
 
-## API principal
-
-| Método | Endpoint | Finalidade |
-|---|---|---|
-| GET | `/api/v1/dashboard` | Indicadores reais |
-| GET / POST | `/api/v1/books` | Listar e cadastrar livros |
-| PATCH | `/api/v1/books/{id}` | Atualizar/desativar livro |
-| GET / POST | `/api/v1/students` | Listar e cadastrar alunos |
-| PATCH | `/api/v1/students/{id}` | Atualizar/desativar aluno |
-| GET / POST | `/api/v1/classes` | Listar e cadastrar turmas |
-| GET / POST | `/api/v1/loans` | Listar e registrar empréstimos |
-| POST | `/api/v1/loans/{id}/return` | Registrar devolução |
-
-## Preparação para importar o seu arquivo `.db`
-
-O banco atual do Libris é PostgreSQL. Um arquivo SQLite `.db` recebido de outra aplicação **não deve simplesmente substituir o banco PostgreSQL**. Primeiro vamos identificar as tabelas e colunas e então importar os livros e alunos para as tabelas corretas, preservando os dados atuais.
-
-1. Copie o `.db` de origem para um caminho local, por exemplo `~/Downloads/biblioteca.db`.
-2. Inspecione apenas a estrutura, sem imprimir dados pessoais:
-
-```bash
-sudo docker compose run --rm --no-deps \
-  -v "$HOME/Downloads/biblioteca.db:/import/origem.db:ro" \
-  api python scripts/inspect_sqlite_db.py /import/origem.db
-```
-
-3. Envie o arquivo `.db` aqui na conversa para que possamos conferir o esquema e os campos antes de importar. Não envie senhas nem arquivos que não sejam necessários para o acervo.
-4. O importador incluído faz **simulação por padrão**. Depois de revisar o mapeamento e fazer backup do PostgreSQL, pode-se simular assim:
-
-```bash
-sudo docker compose run --rm --no-deps \
-  -v "$HOME/Downloads/biblioteca.db:/import/origem.db:ro" \
-  api python scripts/import_sqlite_catalog.py /import/origem.db
-```
-
-5. Somente após validar a prévia e o mapeamento, execute com `--apply` para gravar. Não use `--apply` se a prévia não reconhecer corretamente as tabelas e colunas.
-
-O importador não inventa matrícula de aluno: se não houver uma coluna identificável de matrícula, essa tabela será ignorada e o mapeamento deverá ser ajustado. Livros sem autor ou título também serão ignorados para evitar cadastros incompletos. Registros com ISBN ou matrícula já existentes são tratados como duplicados.
-
-## Dados e privacidade
-
-O sistema pode armazenar dados de alunos menores de idade. Antes do uso real, configure autenticação, permissões por perfil, trilha de auditoria, backup/restauração testados e controles de acesso compatíveis com a LGPD e as regras da escola.
+O código deve passar por esses testes no ambiente local antes de usar cadastros reais de estudantes.

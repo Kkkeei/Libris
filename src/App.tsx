@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { BookOpen, LayoutDashboard, BookMarked, Users, GraduationCap, RotateCcw, Plus, Search, RefreshCw, Menu, AlertCircle, CheckCircle2, LibraryBig } from 'lucide-react'
+import { BookOpen, LayoutDashboard, BookMarked, Users, GraduationCap, RotateCcw, Plus, Search, RefreshCw, Menu, AlertCircle, CheckCircle2, LibraryBig, LogOut } from 'lucide-react'
 import { apiRequest, ApiError } from './services/api'
 import './App.css'
 
@@ -10,7 +10,12 @@ type Student = { id:number; enrollment_number:string; full_name:string; class_id
 type SchoolClass = { id:number; name:string; school_year:number; is_active:boolean; student_count:number }
 type Loan = { id:number; student_id:number; student:string; registration:string; class_name:string|null; book_id:number; book:string; barcode:string; loaned_at:string; due_date:string; returned_at:string|null; status:'active'|'overdue'|'returned' }
 type Dashboard = { books:number; copies:number; available_copies:number; students:number; active_loans:number; overdue_loans:number; classes:number }
-const emptyDashboard: Dashboard = { books:0,copies:0,available_copies:0,students:0,active_loans:0,overdue_loans:0,classes:0 }
+type LoginResult = {access_token:string;token_type:string;expires_in:number;role:'librarian'|'student';display_name:string}
+const emptyDashboard:Dashboard={books:0,copies:0,available_copies:0,students:0,active_loans:0,overdue_loans:0,classes:0}
+const TOKEN_KEY='libris.access_token', ROLE_KEY='libris.role', NAME_KEY='libris.display_name'
+function token(){return sessionStorage.getItem(TOKEN_KEY)}
+function role(){return sessionStorage.getItem(ROLE_KEY)}
+function signOut(){sessionStorage.removeItem(TOKEN_KEY);sessionStorage.removeItem(ROLE_KEY);sessionStorage.removeItem(NAME_KEY);location.assign('/entrar')}
 
 function Shell({children}:{children:ReactNode}) {
   const [menuOpen,setMenuOpen]=useState(false)
@@ -23,9 +28,9 @@ function Shell({children}:{children:ReactNode}) {
       <div className="sidebar-brand"><div className="brand"><span className="brand-mark"><BookOpen size={22}/></span><span className="brand-copy"><strong>Libris</strong><small>Biblioteca Inteligente</small></span></div></div>
       <div className="nav-caption">GESTÃO DA BIBLIOTECA</div>
       <nav className="side-nav">{links.map(([to,label,Icon])=><NavLink key={to} to={to} onClick={()=>setMenuOpen(false)} className={({isActive})=>`nav-link ${isActive?'nav-active':''}`}><Icon size={18}/><span>{label}</span></NavLink>)}</nav>
-      <div className="sidebar-bottom"><div className="help-card"><strong>MVP do Libris</strong><p>Os registros exibidos vêm do banco de dados, sem dados de demonstração.</p></div><div className="sidebar-user"><div className="avatar"><LibraryBig size={18}/></div><div className="user-info"><strong>Ambiente local</strong><small>Sem login configurado</small></div></div></div>
+      <div className="sidebar-bottom"><div className="help-card"><strong>MVP do Libris</strong><p>Os registros exibidos vêm do banco de dados, sem dados de demonstração.</p></div><div className="sidebar-user"><div className="avatar"><LibraryBig size={18}/></div><div className="user-info"><strong>{sessionStorage.getItem(NAME_KEY)||'Bibliotecária'}</strong><small>Acesso administrativo</small></div></div></div>
     </aside>
-    <main className="main-area"><header className="topbar"><button className="icon-btn mobile-menu-btn" onClick={()=>setMenuOpen(true)} aria-label="Abrir menu"><Menu size={21}/></button><div className="breadcrumb"><span>Biblioteca</span><span>›</span><strong>{title}</strong></div><div className="topbar-right"><span className="mvp-local-pill"><span/> Banco conectado via API</span></div></header><div className="content-area">{children}<footer className="footer"><span>© 2026 Libris · Biblioteca Inteligente</span><span>MVP local · dados reais do banco</span></footer></div></main>
+    <main className="main-area"><header className="topbar"><button className="icon-btn mobile-menu-btn" onClick={()=>setMenuOpen(true)} aria-label="Abrir menu"><Menu size={21}/></button><div className="breadcrumb"><span>Biblioteca</span><span>›</span><strong>{title}</strong></div><div className="topbar-right"><span className="mvp-local-pill"><span/> Sessão autenticada</span><button className="icon-btn" aria-label="Sair" onClick={signOut}><LogOut size={16}/></button></div></header><div className="content-area">{children}<footer className="footer"><span>© 2026 Libris · Biblioteca Inteligente</span><span>MVP local · dados reais do banco</span></footer></div></main>
   </div>
 }
 function PageTitle({title,description,action}:{title:string;description:string;action?:ReactNode}) { return <div className="page-heading"><div><div className="eyebrow">LIBRIS · MVP</div><h1>{title}</h1><p>{description}</p></div>{action&&<div className="page-heading-action">{action}</div>}</div> }
@@ -43,7 +48,7 @@ function DashboardPage() {
  const load=useCallback(async()=>{setLoading(true);try{setData(await apiRequest<Dashboard>('/dashboard'));setError('')}catch(e){setError(e instanceof ApiError?e.message:'Não foi possível carregar o resumo da biblioteca.')}finally{setLoading(false)}},[])
  useEffect(()=>{void load()},[load])
  const metrics=[['Livros cadastrados',data.books,BookMarked],['Exemplares',data.copies,LibraryBig],['Disponíveis',data.available_copies,CheckCircle2],['Alunos ativos',data.students,Users],['Empréstimos em aberto',data.active_loans,RotateCcw],['Em atraso',data.overdue_loans,AlertCircle],['Turmas',data.classes,GraduationCap]] as const
- return <><PageTitle title="Visão geral" description="Indicadores calculados a partir dos registros reais da biblioteca." action={<Button variant="secondary" onClick={()=>void load()}><RefreshCw size={16}/> Atualizar</Button>}/><Notice error={error} success=""/>{loading?<Loading/>:<><div className="mvp-metric-grid">{metrics.map(([label,value,Icon])=><div className="panel mvp-metric" key={label}><span className="metric-icon metric-teal"><Icon size={19}/></span><span>{label}</span><strong>{value}</strong></div>)}</div><div className="panel mvp-empty-panel"><BookOpen size={27}/><h2>Resumo da biblioteca</h2><p>Os números acima são consultados no PostgreSQL. Quando o banco estiver vazio, os indicadores permanecem em zero — nenhum registro fictício é criado automaticamente.</p></div></>}</>
+ return <><PageTitle title="Visão geral" description="Indicadores calculados a partir dos registros reais da biblioteca." action={<Button variant="secondary" onClick={()=>void load()}><RefreshCw size={16}/> Atualizar</Button>}/><Notice error={error} success=""/>{loading?<Loading/>:<><div className="mvp-metric-grid">{metrics.map(([label,value,Icon])=><div className="panel mvp-metric" key={label}><span className="metric-icon metric-teal"><Icon size={19}/></span><span>{label}</span><strong>{value}</strong></div>)}</div><div className="panel mvp-empty-panel"><BookOpen size={27}/><h2>Resumo da biblioteca</h2><p>Os números acima são consultados no SQLite. Quando o banco estiver vazio, os indicadores permanecem em zero — nenhum registro fictício é criado automaticamente.</p></div></>}</>
 }
 function BooksPage() {
  const {data,loading,error,reload}=useLoad<Book>('/books');const [query,setQuery]=useState('');const [formOpen,setFormOpen]=useState(false);const [success,setSuccess]=useState('');const [saving,setSaving]=useState(false);const [formError,setFormError]=useState('')
@@ -71,4 +76,8 @@ function LoansPage(){const {data:loans,loading,error,reload}=useLoad<Loan>('/loa
 }
 function NotFound(){return <div className="panel mvp-empty"><h2>Página não encontrada</h2><NavLink to="/dashboard">Voltar ao início</NavLink></div>}
 function AppRoutes(){return <Shell><Routes><Route path="/" element={<Navigate to="/dashboard" replace/>}/><Route path="/dashboard" element={<DashboardPage/>}/><Route path="/books" element={<BooksPage/>}/><Route path="/students" element={<StudentsPage/>}/><Route path="/classes" element={<ClassesPage/>}/><Route path="/loans" element={<LoansPage/>}/><Route path="*" element={<NotFound/>}/></Routes></Shell>}
-export default function App(){return <BrowserRouter><AppRoutes/></BrowserRouter>}
+function LoginPage(){const [username,setUsername]=useState('');const [password,setPassword]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false)
+ async function submit(e:FormEvent){e.preventDefault();if(busy)return;setBusy(true);setError('');try{const result=await apiRequest<LoginResult>('/auth/login',{method:'POST',body:JSON.stringify({username,password})});if(result.role!=='librarian'){setError('Esta tela é exclusiva da bibliotecária. Use o portal do aluno.');return}sessionStorage.setItem(TOKEN_KEY,result.access_token);sessionStorage.setItem(ROLE_KEY,result.role);sessionStorage.setItem(NAME_KEY,result.display_name);location.assign('/dashboard')}catch(e){setError(e instanceof ApiError?e.message:'Não foi possível entrar. Confira a conexão.')}finally{setBusy(false)}}
+ return <main className="portal-auth"><section className="portal-auth-card"><div className="portal-logo-large"><LibraryBig size={32}/></div><h1>Acesso da bibliotecária</h1><p>Entre com as credenciais administrativas da biblioteca.</p><Notice error={error} success=""/><form onSubmit={submit}><Field label="E-mail"><input type="email" autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} required/></Field><Field label="Senha"><input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></Field><Button type="submit" disabled={busy}>{busy?'Entrando…':'Entrar no painel'}</Button></form><p>Primeiro acesso: consulte o README para configurar a conta inicial com uma chave de uso único.</p><a href="/">Voltar ao catálogo público</a></section></main>}
+function AdminGate(){return token()&&role()==='librarian'?<Shell><AppRoutes/></Shell>:<Navigate to="/entrar" replace/>}
+export default function App(){return <BrowserRouter><Routes><Route path="/entrar" element={<LoginPage/>}/><Route path="/*" element={<AdminGate/>}/></Routes></BrowserRouter>}
