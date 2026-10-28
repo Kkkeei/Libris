@@ -31,7 +31,7 @@ Inicie:
 uvicorn app.main:app --reload
 ```
 
-O banco será criado em `data/libris.db` na raiz do repositório. Ele é persistente; não o apague ao reiniciar.
+O banco será criado em `data/libris.db` na raiz do repositório. Ele é persistente; não o apague ao reiniciar. A base começa vazia. Se você tinha dados na versão anterior que usava PostgreSQL, eles não são convertidos automaticamente para SQLite; faça uma exportação/importação específica antes de descartar a base antiga.
 
 ### Frontend — outro terminal, na raiz
 ```bash
