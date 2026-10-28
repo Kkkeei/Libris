@@ -57,7 +57,7 @@ def client(test_engine, monkeypatch):
             session.close()
 
     monkeypatch.setattr("app.core.security.settings.auth_secret_key", "test-only-signing-secret-string-at-least-32-chars")
-    monkeypatch.setattr("app.api.routes.setup.get_settings", lambda: type("Settings", (), {"auth_secret_key": "test-only-signing-secret-string-at-least-32-chars"})())
+    monkeypatch.setattr("app.api.routes.setup.get_settings", lambda: type("Settings", (), {"auth_secret_key": "test-only-signing-secret-string-at-least-32-chars", "libris_setup_key": "test-only-setup-key-longer-than-24-chars"})())
     monkeypatch.setenv("LIBRIS_SETUP_KEY", "test-only-setup-key-longer-than-24-chars")
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
