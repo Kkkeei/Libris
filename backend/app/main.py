@@ -1,10 +1,10 @@
-import asyncio
 import logging
-import time
-from collections.abc import Callable
-from typing import Any
+import os
+import secrets
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -17,6 +17,50 @@ from app import models  # noqa: F401
 settings = get_settings()
 logger = logging.getLogger("libris")
 
+
+def _bootstrap_first_admin() -> None:
+    """
+    Optional one-time setup from environment.
+    Disabled unless both BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD are supplied.
+    """
+    email = settings.bootstrap_admin_email.strip().lower()
+    password = settings.bootstrap_admin_password
+    if not email or not password:
+        return
+    if len(settings.auth_secret_key) < 32:
+        raise RuntimeError("AUTH_SECRET_KEY deve ter ao menos 32 caracteres para habilitar a autenticação.")
+    from sqlalchemy import select
+    from app.core.security import hash_password
+    from app.db.session import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    try:
+        existing = db.scalar(select(User.id).where(User.role == "librarian").limit(1))
+        if existing:
+            return
+        user = User(
+            email=email,
+            full_name=settings.bootstrap_admin_name.strip() or "Bibliotecária",
+            password_hash=hash_password(password),
+            role="librarian",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        logger.warning("First Libris librarian created from environment bootstrap.")
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Create missing tables only; never remove persistent records during restart.
+    Base.metadata.create_all(bind=engine)
+    _bootstrap_first_admin()
+    yield
+
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -24,6 +68,7 @@ app = FastAPI(
     openapi_url=f"{settings.api_v1_prefix}/openapi.json",
     docs_url=f"{settings.api_v1_prefix}/docs",
     redoc_url=f"{settings.api_v1_prefix}/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -36,20 +81,11 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def request_deadline_and_logging(request: Request, call_next: Callable[..., Any]):
-    """Apply a bounded request deadline and provide a request id for support/debugging."""
-    request_id = request.headers.get("X-Request-ID", "")[:100] or f"req-{time.time_ns()}"
-    request.state.request_id = request_id
-    started = time.monotonic()
+async def request_deadline_and_logging(request, call_next):
+    request_id = request.headers.get("X-Request-ID", "")[:100] or secrets.token_hex(12)
+    started = __import__("time").monotonic()
     try:
-        response = await asyncio.wait_for(call_next(request), timeout=30)
-    except TimeoutError:
-        logger.warning("Request timed out: id=%s method=%s path=%s", request_id, request.method, request.url.path)
-        return JSONResponse(
-            status_code=504,
-            content={"detail": "A operação demorou mais que o esperado. Verifique o estado antes de repetir.", "request_id": request_id},
-            headers={"X-Request-ID": request_id},
-        )
+        response = await call_next(request)
     except Exception:
         logger.exception("Unhandled API error: id=%s method=%s path=%s", request_id, request.method, request.url.path)
         return JSONResponse(
@@ -58,14 +94,8 @@ async def request_deadline_and_logging(request: Request, call_next: Callable[...
             headers={"X-Request-ID": request_id},
         )
     response.headers["X-Request-ID"] = request_id
-    response.headers["X-Response-Time-Ms"] = str(round((time.monotonic() - started) * 1000, 2))
+    response.headers["X-Response-Time-Ms"] = str(round((__import__("time").monotonic() - started) * 1000, 2))
     return response
-
-
-@app.on_event("startup")
-def initialize_database() -> None:
-    # Persistence stays on disk; tables are never dropped on restart.
-    Base.metadata.create_all(bind=engine)
 
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
