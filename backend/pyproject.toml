@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "libris-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "API backend do Libris — Biblioteca Inteligente"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,8 +12,10 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1.0",
   "SQLAlchemy>=2.0.36,<3.0",
   "alembic>=1.14,<2.0",
-  "psycopg[binary]>=3.2,<4.0",
   "pydantic-settings>=2.7,<3.0",
+  "python-jose[cryptography]>=3.3,<4.0",
+  "passlib[bcrypt]>=1.7.4,<2.0",
+  "email-validator>=2.2,<3.0",
 ]
 
 [project.optional-dependencies]
