@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:student",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "dev:student": "vite --host 0.0.0.0 --port 5173",
+    "dev:admin": "VITE_APP_SITE=admin vite --host 0.0.0.0 --port 5174",
+    "build:student": "VITE_APP_SITE=student tsc -b && VITE_APP_SITE=student vite build --outDir dist-student",
+    "build:admin": "VITE_APP_SITE=admin tsc -b && VITE_APP_SITE=admin vite build --outDir dist-admin"
   },
   "dependencies": {
     "react": "^18.3.1",
