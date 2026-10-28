@@ -3,6 +3,7 @@ from app.models.book import Book
 from app.models.book_copy import BookCopy
 from app.models.classroom import SchoolClass
 from app.models.loan import Loan
+from app.models.loan_request import LoanRequest
 from app.models.student import Student
 from app.models.student_account import StudentAccount
 from app.models.user import User
@@ -12,6 +13,7 @@ __all__ = [
     "Book",
     "BookCopy",
     "Loan",
+    "LoanRequest",
     "SchoolClass",
     "Student",
     "StudentAccount",
