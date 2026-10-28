@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     )
     sql_echo: bool = False
     auth_secret_key: str = ""
+    libris_setup_key: str = ""
     access_token_minutes: int = Field(default=480, ge=5, le=1440)
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
