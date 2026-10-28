@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ORMModel(BaseModel):
@@ -142,6 +142,24 @@ class LoanOut(BaseModel):
     due_date: date
     returned_at: Any
     status: str
+
+
+class LoanRequestCreate(BaseModel):
+    book_id: int = Field(gt=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class LoanRequestOut(BaseModel):
+    id: int
+    student_id: int
+    student: str
+    registration: str
+    book_id: int
+    book: str
+    status: str
+    note: str | None
+    requested_at: Any
+    resolved_at: Any
 
 
 class DashboardOut(BaseModel):
