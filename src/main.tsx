@@ -5,11 +5,7 @@ import Admin from './App.tsx'
 import './index.css'
 
 const path = window.location.pathname
-const root = ReactDOM.createRoot(document.getElementById('root')!)
-root.render(
-  <React.StrictMode>
-    {path.startsWith('/admin') || path === '/entrar-admin' || path === '/dashboard' || path.startsWith('/books') || path.startsWith('/students') || path.startsWith('/classes') || path.startsWith('/loans')
-      ? <Admin />
-      : <Portal />}
-  </React.StrictMode>,
+const isAdmin = path.startsWith('/admin') || ['/entrar-admin', '/dashboard', '/books', '/students', '/classes', '/loans'].some(prefix => path === prefix || path.startsWith(`${prefix}/`))
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>{isAdmin ? <Admin /> : <Portal />}</React.StrictMode>,
 )
