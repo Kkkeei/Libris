@@ -55,6 +55,36 @@ uvicorn app.main:app --reload
 ```
 Em outro terminal na raiz: `npm install` e `npm run dev`. Antes de iniciar, edite `backend/.env` e defina as duas chaves secretas como descrito acima.
 
+## Acesso pelo celular na mesma rede local
+
+Use isto apenas numa rede Wi-Fi confiável, como a rede interna da escola. Não crie redirecionamento de portas no roteador nem exponha a API diretamente à internet.
+
+1. Descubra o IP local do computador que executa o Libris:
+   - Linux: `hostname -I`
+   - Windows: `ipconfig`
+2. Na raiz do projeto, crie o arquivo de ambiente do Vite:
+   ```bash
+   cp -n .env.example .env
+   ```
+   Edite `.env` e substitua `VITE_API_BASE_URL` pelo IP do computador, por exemplo:
+   `VITE_API_BASE_URL=http://192.168.1.50:8000/api/v1`
+3. Em `backend/.env`, ajuste `CORS_ORIGINS` para incluir a origem do frontend usando o mesmo IP, por exemplo:
+   `CORS_ORIGINS=["http://192.168.1.50:5173","http://localhost:5173","http://127.0.0.1:5173"]`
+4. Inicie o backend aceitando conexões da LAN:
+   ```bash
+   cd backend
+   source .venv/bin/activate
+   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
+   No Windows, ative `.venv\\Scripts\\Activate.ps1` no PowerShell e execute o mesmo comando `uvicorn`.
+5. Na raiz, inicie o frontend para a rede local:
+   ```bash
+   npm run dev -- --host 0.0.0.0
+   ```
+6. No celular conectado à mesma rede, abra `http://192.168.1.50:5173` (substitua pelo IP real do computador).
+
+Se o firewall bloquear a conexão, permita as portas 5173 e 8000 somente na rede privada/local, de acordo com as regras da escola. O endereço da API no navegador do celular precisa ser o IP do computador, não `localhost`.
+
 ## Primeiro acesso administrativo
 
 Com o backend iniciado e `LIBRIS_SETUP_KEY` configurada, abra http://localhost:8000/api/v1/docs e faça POST em `/api/v1/setup/admin`, informando e-mail, nome, uma senha forte de ao menos 12 caracteres e a chave de setup. O endpoint é de uso único e recusa criar outro primeiro administrador se já existir uma conta de bibliotecária.
