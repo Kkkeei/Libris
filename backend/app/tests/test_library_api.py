@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from app.core.security import hash_password
-from app.models import Student, StudentAccount, User
+from app.models import User
 
 
 def _create_librarian(db_session):
@@ -66,8 +66,7 @@ def test_loan_and_return_update_real_availability(client, db_session):
     assert client.get("/api/v1/books").json()[0]["available"] == 1
 
 
-def test_dashboard_empty_database_returns_zero_counts(client):
-    # Admin-only dashboard rejects unauthenticated requests, and the health endpoint remains public.
+def test_dashboard_requires_authentication(client):
     assert client.get("/api/v1/dashboard").status_code == 401
     assert client.get("/api/v1/health").json()["status"] == "ok"
 
@@ -75,7 +74,7 @@ def test_dashboard_empty_database_returns_zero_counts(client):
 def test_student_can_only_read_own_loan_history(client, db_session):
     headers = _admin_headers(client, db_session)
     first = client.post("/api/v1/students", headers=headers, json={"full_name": "Primeiro aluno", "enrollment_number": "TEST-MAT-101"}).json()
-    second = client.post("/api/v1/students", headers=headers, json={"full_name": "Segundo aluno", "enrollment_number": "TEST-MAT-102"}).json()
+    client.post("/api/v1/students", headers=headers, json={"full_name": "Segundo aluno", "enrollment_number": "TEST-MAT-102"})
     account = client.post(
         "/api/v1/auth/student-accounts",
         headers=headers,
