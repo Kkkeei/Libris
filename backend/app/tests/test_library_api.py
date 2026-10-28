@@ -186,3 +186,34 @@ def test_first_librarian_setup_is_one_time(client):
     assert login.status_code == 200, login.text
     second_attempt = client.post("/api/v1/setup/admin", json=payload)
     assert second_attempt.status_code == 409
+
+
+def test_student_can_self_register_and_log_in(client):
+    payload = {
+        "full_name": "Aluno Autocadastro",
+        "enrollment_number": "SELF-REG-001",
+        "username": "aluno.autocadastro",
+        "password": "Senha-de-aluno-segura-2026",
+    }
+    response = client.post("/api/v1/auth/student-register", json=payload)
+    assert response.status_code == 201, response.text
+    assert response.json()["created"] is True
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": payload["username"], "password": payload["password"]},
+    )
+    assert login.status_code == 200, login.text
+    assert login.json()["role"] == "student"
+
+    duplicate_enrollment = client.post(
+        "/api/v1/auth/student-register",
+        json={**payload, "username": "aluno.outro"},
+    )
+    assert duplicate_enrollment.status_code == 409
+
+    duplicate_username = client.post(
+        "/api/v1/auth/student-register",
+        json={**payload, "enrollment_number": "SELF-REG-002"},
+    )
+    assert duplicate_username.status_code == 409
