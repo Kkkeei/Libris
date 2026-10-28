@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,17 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.security import (
-    create_access_token,
-    hash_password,
-    require_librarian,
-    verify_password,
-)
+from app.core.security import create_access_token, hash_password, require_librarian, verify_password
 from app.db.session import get_db
 from app.models import Student, StudentAccount, User
 
 router = APIRouter(prefix="/auth", tags=["autenticação"])
-settings = get_settings()
 
 
 class LoginRequest(BaseModel):
@@ -45,19 +38,12 @@ class StudentAccountCreate(BaseModel):
     password: str = Field(min_length=12, max_length=200)
 
 
-def _ensure_secret_configured() -> None:
-    if len(settings.auth_secret_key) < 32:
-        raise HTTPException(
-            status_code=503,
-            detail="Autenticação não configurada. Defina AUTH_SECRET_KEY com pelo menos 32 caracteres.",
-        )
-
-
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
-    _ensure_secret_configured()
+    settings = get_settings()
+    if len(settings.auth_secret_key) < 32:
+        raise HTTPException(status_code=503, detail="Autenticação não configurada. Defina AUTH_SECRET_KEY.")
     username = payload.username.strip().lower()
-    # Librarian login is by e-mail; student login is by assigned username.
     user = db.scalar(select(User).where(User.email == username))
     if user is None:
         user = db.scalar(select(User).where(User.email == f"{username}@student.libris.invalid"))
@@ -72,7 +58,7 @@ def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
 
 
 @router.get("/me")
-def me(user=Depends(require_librarian)):
+def me(user: Annotated[User, Depends(require_librarian)]):
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -82,25 +68,17 @@ def create_librarian(
     _admin: Annotated[User, Depends(require_librarian)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    normalized_email = payload.email.strip().lower()
-    if db.scalar(select(User.id).where(User.email == normalized_email)):
+    email = str(payload.email).strip().lower()
+    if db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Este e-mail já está cadastrado.")
-    user = User(
-        email=normalized_email,
-        password_hash=hash_password(payload.password),
-        full_name=payload.full_name.strip(),
-        role="librarian",
-        is_active=True,
-    )
+    user = User(email=email, password_hash=hash_password(payload.password), full_name=payload.full_name.strip(), role="librarian", is_active=True)
     db.add(user)
     try:
         db.commit()
         db.refresh(user)
     except Exception as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Não foi possível criar o usuário. Confira os dados e tente novamente."
-        ) from exc
+        raise HTTPException(status_code=409, detail="Não foi possível criar o usuário. Confira os dados.") from exc
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -119,17 +97,11 @@ def create_student_account(
     email = f"{username}@student.libris.invalid"
     if db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Esse nome de acesso já está em uso.")
-    user = User(
-        email=email,
-        password_hash=hash_password(payload.password),
-        full_name=student.full_name,
-        role="student",
-        is_active=True,
-    )
+    user = User(email=email, password_hash=hash_password(payload.password), full_name=student.full_name, role="student", is_active=True)
     db.add(user)
-    db.flush()
-    db.add(StudentAccount(student_id=student.id, user_id=user.id))
     try:
+        db.flush()
+        db.add(StudentAccount(student_id=student.id, user_id=user.id))
         db.commit()
         db.refresh(user)
     except Exception as exc:
