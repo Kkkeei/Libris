@@ -54,13 +54,13 @@ describe('apiRequest', () => {
       })),
     )
 
-    const pending = apiRequest('/slow')
-    await vi.advanceTimersByTimeAsync(12_000)
-    await expect(pending).rejects.toMatchObject({
+    const timedOut = expect(apiRequest('/slow')).rejects.toMatchObject({
       name: 'ApiError',
       status: 0,
       message: expect.stringContaining('12 segundos'),
     })
+    await vi.advanceTimersByTimeAsync(12_000)
+    await timedOut
   })
 
   it('normalizes a network error instead of leaving the caller waiting', async () => {
