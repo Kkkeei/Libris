@@ -172,7 +172,7 @@ def test_archived_books_are_private_to_admin_but_history_is_preserved(client, db
 
 def test_first_librarian_setup_is_one_time(client):
     payload = {
-        "email": "primeira.bibliotecaria@example.test",
+        "email": "primeira.bibliotecaria@example.com",
         "full_name": "Primeira Bibliotecária",
         "password": "Senha-inicial-bem-segura-2026",
         "setup_key": "test-only-setup-key-longer-than-24-chars",
