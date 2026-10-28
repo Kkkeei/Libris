@@ -3,6 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.core.security import require_librarian
 
 router = APIRouter(tags=["health"])
 
