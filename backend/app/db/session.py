@@ -1,6 +1,4 @@
 from collections.abc import Generator
-from pathlib import Path
-
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -8,7 +6,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import get_settings
 
 settings = get_settings()
-is_sqlite = settings.database_url.startswith("sqlite")
+is_sqlite = settings.database_url.startswith("sqlite:///")
+database_path = settings.database_url.removeprefix("sqlite:///") if is_sqlite else ""
+
+if is_sqlite:
+    from pathlib import Path
+    Path(database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
 connect_args = {"check_same_thread": False, "timeout": 15} if is_sqlite else {}
 engine = create_engine(
     settings.database_url,
@@ -24,6 +28,7 @@ if is_sqlite:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=15000")
+        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
 
