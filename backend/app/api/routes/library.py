@@ -110,6 +110,23 @@ def get_public_book(book_id: int, db: Session = Depends(get_db)):
     return _book_out(db, book)
 
 
+@admin_router.get("/admin/books", response_model=list[BookOut])
+def list_admin_books(
+    q: str | None = None,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+):
+    stmt = select(Book).order_by(Book.title).limit(500)
+    if not include_inactive:
+        stmt = stmt.where(Book.is_active.is_(True))
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            (Book.title.ilike(term)) | (Book.author.ilike(term)) | (Book.isbn.ilike(term))
+        )
+    return [_book_out(db, book) for book in db.scalars(stmt).all()]
+
+
 @admin_router.post("/books", response_model=BookOut, status_code=status.HTTP_201_CREATED)
 def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     book = Book(

@@ -41,11 +41,12 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     })
     if (!response.ok) {
       const raw = await response.text().catch(() => '')
-      if (response.status === 401 && typeof sessionStorage !== 'undefined') {
+      if (response.status === 401 && !path.startsWith('/auth/login') && typeof sessionStorage !== 'undefined') {
+        const hasSession = Boolean(sessionStorage.getItem(TOKEN_KEY))
         sessionStorage.removeItem(TOKEN_KEY)
         sessionStorage.removeItem('libris.role')
         sessionStorage.removeItem('libris.display_name')
-        if (typeof window !== 'undefined') window.dispatchEvent(new Event('libris-session-expired'))
+        if (hasSession && typeof window !== 'undefined') window.dispatchEvent(new Event('libris-session-expired'))
       }
       throw new ApiError(
         getMessage(raw, `A solicitação falhou (HTTP ${response.status}).`),

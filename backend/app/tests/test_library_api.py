@@ -148,3 +148,41 @@ def test_student_loan_request_stays_pending_until_librarian_confirms(client, db_
         headers=admin_headers,
     )
     assert duplicate_confirmation.status_code == 409
+
+
+def test_archived_books_are_private_to_admin_but_history_is_preserved(client, db_session):
+    headers = _admin_headers(client, db_session)
+    book = client.post(
+        "/api/v1/books",
+        headers=headers,
+        json={"title": "Livro arquivado", "author": "Autor", "category": "Teste", "copies": 1},
+    ).json()
+    archived = client.patch(
+        f"/api/v1/books/{book['id']}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert archived.status_code == 200, archived.text
+    assert client.get("/api/v1/books").json() == []
+    admin_list = client.get("/api/v1/admin/books?include_inactive=true", headers=headers)
+    assert admin_list.status_code == 200, admin_list.text
+    assert len(admin_list.json()) == 1
+    assert admin_list.json()[0]["is_active"] is False
+
+
+def test_first_librarian_setup_is_one_time(client):
+    payload = {
+        "email": "primeira.bibliotecaria@example.com",
+        "full_name": "Primeira Bibliotecária",
+        "password": "Senha-inicial-bem-segura-2026",
+        "setup_key": "test-only-setup-key-longer-than-24-chars",
+    }
+    response = client.post("/api/v1/setup/admin", json=payload)
+    assert response.status_code == 201, response.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": payload["email"], "password": payload["password"]},
+    )
+    assert login.status_code == 200, login.text
+    second_attempt = client.post("/api/v1/setup/admin", json=payload)
+    assert second_attempt.status_code == 409

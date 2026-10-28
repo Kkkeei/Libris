@@ -15,11 +15,12 @@ const emptyDashboard:Dashboard={books:0,copies:0,available_copies:0,students:0,a
 const TOKEN_KEY='libris.access_token', ROLE_KEY='libris.role', NAME_KEY='libris.display_name'
 function token(){return sessionStorage.getItem(TOKEN_KEY)}
 function role(){return sessionStorage.getItem(ROLE_KEY)}
-function signOut(){sessionStorage.removeItem(TOKEN_KEY);sessionStorage.removeItem(ROLE_KEY);sessionStorage.removeItem(NAME_KEY);location.assign('/entrar')}
+function signOut(){sessionStorage.removeItem(TOKEN_KEY);sessionStorage.removeItem(ROLE_KEY);sessionStorage.removeItem(NAME_KEY);location.assign('/entrar-admin')}
 
 function Shell({children}:{children:ReactNode}) {
   const [menuOpen,setMenuOpen]=useState(false)
   const location=useLocation()
+  useEffect(()=>{const expired=()=>window.location.assign('/entrar');window.addEventListener('libris-session-expired',expired);return()=>window.removeEventListener('libris-session-expired',expired)},[])
   const links=[['/dashboard','Visão geral',LayoutDashboard],['/books','Acervo',BookMarked],['/students','Alunos',Users],['/classes','Turmas',GraduationCap],['/loans','Empréstimos',RotateCcw],['/loan-requests','Solicitações',ClipboardCheck]] as const
   const title=links.find(([to])=>to===location.pathname)?.[1] ?? 'Libris'
   return <div className="app-shell">
