@@ -34,3 +34,6 @@ class LoanRequest(Base):
     resolved_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
+
+    student: Mapped["Student"] = relationship()
+    book: Mapped["Book"] = relationship()
