@@ -7,13 +7,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.session import get_db
-from app.models import Book, BookCopy, Loan, SchoolClass, Student
+from app.core.security import get_current_user, require_librarian
+from app.models import Book, BookCopy, Loan, SchoolClass, Student, StudentAccount, User
 from app.schemas.library import (
     BookCreate, BookOut, BookUpdate, ClassCreate, ClassOut, DashboardOut,
     LoanCreate, LoanOut, StudentCreate, StudentOut, StudentUpdate,
 )
 
 router = APIRouter(tags=["biblioteca"])
+
+# The admin router is protected globally. Only a deliberately limited catalogue
+# route is public; student data and all mutations stay behind authenticated APIs.
+admin_router = APIRouter(tags=["biblioteca"], dependencies=[Depends(require_librarian)])
+public_router = APIRouter(tags=["catálogo público"])
+student_router = APIRouter(tags=["portal do aluno"], dependencies=[Depends(get_current_user)])
+
 
 
 def _book_out(db: Session, book: Book) -> BookOut:
@@ -40,7 +48,7 @@ def _loan_out(loan: Loan) -> LoanOut:
                    loaned_at=loan.loaned_at, due_date=loan.due_date, returned_at=loan.returned_at, status=status_text)
 
 
-@router.get("/books", response_model=list[BookOut])
+@public_router.get("/books", response_model=list[BookOut])
 def list_books(q: str | None = None, include_inactive: bool = False, db: Session = Depends(get_db)):
     stmt = select(Book).order_by(Book.title)
     if not include_inactive:
@@ -51,7 +59,7 @@ def list_books(q: str | None = None, include_inactive: bool = False, db: Session
     return [_book_out(db, b) for b in db.scalars(stmt).all()]
 
 
-@router.post("/books", response_model=BookOut, status_code=status.HTTP_201_CREATED)
+@admin_router.post("/books", response_model=BookOut, status_code=status.HTTP_201_CREATED)
 def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     book = Book(title=payload.title.strip(), author=payload.author.strip(), category=payload.category.strip(),
                 isbn=payload.isbn.strip() if payload.isbn else None, publisher=payload.publisher,
@@ -69,7 +77,7 @@ def create_book(payload: BookCreate, db: Session = Depends(get_db)):
     return _book_out(db, book)
 
 
-@router.patch("/books/{book_id}", response_model=BookOut)
+@admin_router.patch("/books/{book_id}", response_model=BookOut)
 def update_book(book_id: int, payload: BookUpdate, db: Session = Depends(get_db)):
     book = db.get(Book, book_id)
     if not book:
@@ -85,7 +93,7 @@ def update_book(book_id: int, payload: BookUpdate, db: Session = Depends(get_db)
     return _book_out(db, book)
 
 
-@router.get("/students", response_model=list[StudentOut])
+@admin_router.get("/students", response_model=list[StudentOut])
 def list_students(q: str | None = None, include_inactive: bool = False, db: Session = Depends(get_db)):
     stmt = select(Student).options(joinedload(Student.school_class)).order_by(Student.full_name)
     if not include_inactive:
@@ -96,7 +104,7 @@ def list_students(q: str | None = None, include_inactive: bool = False, db: Sess
     return [_student_out(s) for s in db.scalars(stmt).unique().all()]
 
 
-@router.post("/students", response_model=StudentOut, status_code=201)
+@admin_router.post("/students", response_model=StudentOut, status_code=201)
 def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
     if payload.class_id is not None and not db.get(SchoolClass, payload.class_id):
         raise HTTPException(404, "Turma não encontrada.")
@@ -111,7 +119,7 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
     return _student_out(db.scalar(select(Student).options(joinedload(Student.school_class)).where(Student.id == student.id)))
 
 
-@router.patch("/students/{student_id}", response_model=StudentOut)
+@admin_router.patch("/students/{student_id}", response_model=StudentOut)
 def update_student(student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)):
     student = db.get(Student, student_id)
     if not student:
@@ -130,7 +138,7 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
     return _student_out(student)
 
 
-@router.get("/classes", response_model=list[ClassOut])
+@admin_router.get("/classes", response_model=list[ClassOut])
 def list_classes(school_year: int | None = None, db: Session = Depends(get_db)):
     stmt = select(SchoolClass).where(SchoolClass.is_active.is_(True)).order_by(SchoolClass.school_year.desc(), SchoolClass.name)
     if school_year:
@@ -140,7 +148,7 @@ def list_classes(school_year: int | None = None, db: Session = Depends(get_db)):
                      student_count=db.scalar(select(func.count(Student.id)).where(Student.class_id == c.id, Student.is_active.is_(True))) or 0) for c in classes]
 
 
-@router.post("/classes", response_model=ClassOut, status_code=201)
+@admin_router.post("/classes", response_model=ClassOut, status_code=201)
 def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
     existing = db.scalar(select(SchoolClass).where(SchoolClass.name == payload.name.strip(), SchoolClass.school_year == payload.school_year, SchoolClass.is_active.is_(True)))
     if existing:
@@ -152,7 +160,7 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
     return ClassOut(id=obj.id, name=obj.name, school_year=obj.school_year, is_active=obj.is_active, student_count=0)
 
 
-@router.get("/loans", response_model=list[LoanOut])
+@admin_router.get("/loans", response_model=list[LoanOut])
 def list_loans(q: str | None = None, status_filter: str | None = Query(default=None, alias="status"), db: Session = Depends(get_db)):
     stmt = select(Loan).options(joinedload(Loan.student).joinedload(Student.school_class), joinedload(Loan.copy).joinedload(BookCopy.book)).order_by(Loan.loaned_at.desc())
     loans = db.scalars(stmt).unique().all()
@@ -165,7 +173,7 @@ def list_loans(q: str | None = None, status_filter: str | None = Query(default=N
     return result
 
 
-@router.post("/loans", response_model=LoanOut, status_code=201)
+@admin_router.post("/loans", response_model=LoanOut, status_code=201)
 def create_loan(payload: LoanCreate, db: Session = Depends(get_db)):
     student = db.get(Student, payload.student_id)
     if not student or not student.is_active:
@@ -190,7 +198,7 @@ def create_loan(payload: LoanCreate, db: Session = Depends(get_db)):
     return _loan_out(loan)
 
 
-@router.post("/loans/{loan_id}/return", response_model=LoanOut)
+@admin_router.post("/loans/{loan_id}/return", response_model=LoanOut)
 def return_loan(loan_id: int, db: Session = Depends(get_db)):
     loan = db.scalar(select(Loan).options(joinedload(Loan.student).joinedload(Student.school_class), joinedload(Loan.copy).joinedload(BookCopy.book)).where(Loan.id == loan_id).with_for_update())
     if not loan:
@@ -205,7 +213,7 @@ def return_loan(loan_id: int, db: Session = Depends(get_db)):
     return _loan_out(loan)
 
 
-@router.get("/dashboard", response_model=DashboardOut)
+@admin_router.get("/dashboard", response_model=DashboardOut)
 def dashboard(db: Session = Depends(get_db)):
     today = date.today()
     return DashboardOut(
@@ -217,3 +225,77 @@ def dashboard(db: Session = Depends(get_db)):
         overdue_loans=db.scalar(select(func.count(Loan.id)).where(Loan.returned_at.is_(None), Loan.due_date < today)) or 0,
         classes=db.scalar(select(func.count(SchoolClass.id)).where(SchoolClass.is_active.is_(True))) or 0,
     )
+
+
+@public_router.get("/books/{book_id}", response_model=BookOut)
+def get_public_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(Book, book_id)
+    if book is None or not book.is_active:
+        raise HTTPException(status_code=404, detail="Livro não encontrado.")
+    return _book_out(db, book)
+
+
+@student_router.get("/students/me/loans", response_model=list[LoanOut])
+def my_loans(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "student":
+        raise HTTPException(status_code=403, detail="Esta área é exclusiva dos alunos.")
+    link = db.scalar(select(StudentAccount).where(StudentAccount.user_id == current_user.id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Este acesso ainda não está vinculado a um cadastro de aluno.")
+    stmt = (
+        select(Loan)
+        .options(joinedload(Loan.student).joinedload(Student.school_class), joinedload(Loan.copy).joinedload(BookCopy.book))
+        .where(Loan.student_id == link.student_id)
+        .order_by(Loan.loaned_at.desc())
+    )
+    return [_loan_out(loan) for loan in db.scalars(stmt).unique().all()]
+
+
+@student_router.post("/students/me/loans", response_model=LoanOut, status_code=201)
+def student_register_loan(
+    payload: LoanCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "student":
+        raise HTTPException(status_code=403, detail="Esta área é exclusiva dos alunos.")
+    link = db.scalar(select(StudentAccount).where(StudentAccount.user_id == current_user.id))
+    if link is None:
+        raise HTTPException(status_code=404, detail="Este acesso ainda não está vinculado a um cadastro de aluno.")
+    # Student cannot choose a different student_id; tie the operation to its verified account.
+    student = db.get(Student, link.student_id)
+    if student is None or not student.is_active:
+        raise HTTPException(status_code=404, detail="Cadastro de aluno inativo ou não encontrado.")
+    book = db.get(Book, payload.book_id)
+    if book is None or not book.is_active:
+        raise HTTPException(status_code=404, detail="Livro não encontrado ou inativo.")
+    if payload.due_date < date.today():
+        raise HTTPException(status_code=422, detail="A data de devolução não pode estar no passado.")
+    copy = db.scalar(
+        select(BookCopy)
+        .where(
+            BookCopy.book_id == book.id,
+            BookCopy.is_active.is_(True),
+            ~BookCopy.loans.any(Loan.returned_at.is_(None)),
+        )
+        .limit(1)
+    )
+    if copy is None:
+        raise HTTPException(status_code=409, detail="Não há exemplares disponíveis deste livro.")
+    loan = Loan(student_id=student.id, copy_id=copy.id, due_date=payload.due_date, status="active")
+    db.add(loan)
+    try:
+        db.commit()
+        db.refresh(loan)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Este exemplar acabou de ser emprestado. Atualize o catálogo antes de tentar novamente.") from exc
+    saved = db.scalar(
+        select(Loan)
+        .options(joinedload(Loan.student).joinedload(Student.school_class), joinedload(Loan.copy).joinedload(BookCopy.book))
+        .where(Loan.id == loan.id)
+    )
+    return _loan_out(saved)
