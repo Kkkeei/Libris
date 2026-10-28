@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,16 +7,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.security import create_access_token, hash_password, require_librarian, verify_password
+from app.core.security import (
+    create_access_token,
+    hash_password,
+    require_librarian,
+    verify_password,
+)
 from app.db.session import get_db
-from app.models import Student, User
+from app.models import Student, StudentAccount, User
 
 router = APIRouter(prefix="/auth", tags=["autenticação"])
 settings = get_settings()
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=200)
 
 
@@ -51,11 +56,13 @@ def _ensure_secret_configured() -> None:
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
     _ensure_secret_configured()
-    normalized_email = payload.email.strip().lower()
-    user = db.scalar(select(User).where(User.email == normalized_email))
+    username = payload.username.strip().lower()
+    # Librarian login is by e-mail; student login is by assigned username.
+    user = db.scalar(select(User).where(User.email == username))
+    if user is None:
+        user = db.scalar(select(User).where(User.email == f"{username}@student.libris.invalid"))
     if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
-        # Same message for unknown users and wrong passwords.
-        raise HTTPException(status_code=401, detail="E-mail ou senha inválidos.")
+        raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
     return LoginResponse(
         access_token=create_access_token(user),
         expires_in=settings.access_token_minutes * 60,
@@ -65,7 +72,7 @@ def login(payload: LoginRequest, db: Annotated[Session, Depends(get_db)]):
 
 
 @router.get("/me")
-def me(user: Annotated[User, Depends(require_librarian)]):
+def me(user=Depends(require_librarian)):
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -78,15 +85,22 @@ def create_librarian(
     normalized_email = payload.email.strip().lower()
     if db.scalar(select(User.id).where(User.email == normalized_email)):
         raise HTTPException(status_code=409, detail="Este e-mail já está cadastrado.")
-    user = User(email=normalized_email, password_hash=hash_password(payload.password),
-                full_name=payload.full_name.strip(), role="librarian", is_active=True)
+    user = User(
+        email=normalized_email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name.strip(),
+        role="librarian",
+        is_active=True,
+    )
     db.add(user)
     try:
         db.commit()
         db.refresh(user)
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Não foi possível criar o usuário. Confira os dados e tente novamente.")
+        raise HTTPException(
+            status_code=409, detail="Não foi possível criar o usuário. Confira os dados e tente novamente."
+        ) from exc
     return {"id": user.id, "email": user.email, "full_name": user.full_name, "role": user.role}
 
 
@@ -99,19 +113,26 @@ def create_student_account(
     student = db.get(Student, payload.student_id)
     if student is None or not student.is_active:
         raise HTTPException(status_code=404, detail="Aluno não encontrado ou inativo.")
+    if db.scalar(select(StudentAccount.id).where(StudentAccount.student_id == student.id)):
+        raise HTTPException(status_code=409, detail="Este aluno já possui um acesso vinculado.")
     username = payload.username.strip().lower()
     email = f"{username}@student.libris.invalid"
     if db.scalar(select(User.id).where(User.email == email)):
-        raise HTTPException(status_code=409, detail="Esse nome de acesso já está vinculado.")
-    user = User(email=email, password_hash=hash_password(payload.password),
-                full_name=student.full_name, role="student", is_active=True)
+        raise HTTPException(status_code=409, detail="Esse nome de acesso já está em uso.")
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        full_name=student.full_name,
+        role="student",
+        is_active=True,
+    )
     db.add(user)
+    db.flush()
+    db.add(StudentAccount(student_id=student.id, user_id=user.id))
     try:
         db.commit()
         db.refresh(user)
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Não foi possível vincular o acesso.") from exc
-    # Store linkage separately via student_id claim will not be enough; avoid implying this account
-    # is already tied to a student until the dedicated mapping exists.
     return {"id": user.id, "username": username, "role": user.role, "student_id": student.id}
