@@ -33,13 +33,13 @@ def bootstrap_admin(payload: BootstrapRequest, db: Session = Depends(get_db)):
     Create the first librarian exactly once.
     The setup key is read from process environment and should be removed after setup.
     """
-    configured_key = __import__("os").getenv("LIBRIS_SETUP_KEY", "")
+    settings = get_settings()
+    configured_key = settings.libris_setup_key
     if len(configured_key) < 24 or not secrets.compare_digest(payload.setup_key, configured_key):
         raise HTTPException(status_code=403, detail="Chave de configuração inválida.")
     existing = db.scalar(select(User.id).where(User.role == "librarian").limit(1))
     if existing:
         raise HTTPException(status_code=409, detail="O primeiro acesso já foi configurado.")
-    settings = get_settings()
     if len(settings.auth_secret_key) < 32:
         raise HTTPException(status_code=503, detail="Defina AUTH_SECRET_KEY antes da configuração inicial.")
     email = str(payload.email).strip().lower()
