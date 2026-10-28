@@ -1,5 +1,7 @@
-from pathlib import Path
+import json
 import os
+from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,7 +62,6 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             raw = value.strip()
             if raw.startswith("["):
-                import json
                 try:
                     parsed = json.loads(raw)
                     if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
@@ -69,9 +70,6 @@ class Settings(BaseSettings):
                     pass
             return [origin.strip() for origin in raw.split(",") if origin.strip()]
         return value
-
-
-from functools import lru_cache
 
 
 @lru_cache
