@@ -168,3 +168,21 @@ def test_archived_books_are_private_to_admin_but_history_is_preserved(client, db
     assert admin_list.status_code == 200, admin_list.text
     assert len(admin_list.json()) == 1
     assert admin_list.json()[0]["is_active"] is False
+
+
+def test_first_librarian_setup_is_one_time(client):
+    payload = {
+        "email": "primeira.bibliotecaria@example.test",
+        "full_name": "Primeira Bibliotecária",
+        "password": "Senha-inicial-bem-segura-2026",
+        "setup_key": "test-only-setup-key-longer-than-24-chars",
+    }
+    response = client.post("/api/v1/setup/admin", json=payload)
+    assert response.status_code == 201, response.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": payload["email"], "password": payload["password"]},
+    )
+    assert login.status_code == 200, login.text
+    second_attempt = client.post("/api/v1/setup/admin", json=payload)
+    assert second_attempt.status_code == 409
