@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -540,6 +540,7 @@ def list_loan_requests(
 @admin_router.post("/loan-requests/{request_id}/confirm", response_model=LoanOut)
 def confirm_loan_request(
     request_id: int,
+    current_user: User = Depends(require_librarian),
     db: Session = Depends(get_db),
 ):
     request_obj = db.scalar(
@@ -555,20 +556,31 @@ def confirm_loan_request(
     book = db.get(Book, request_obj.book_id)
     if student is None or not student.is_active or book is None or not book.is_active:
         raise HTTPException(status_code=409, detail="Aluno ou livro inativo; a solicitação não pode ser confirmada.")
+    # Atomically claim the pending request. A concurrent confirmation cannot also win.
+    from sqlalchemy import update
+    claim = db.execute(
+        update(LoanRequest)
+        .where(LoanRequest.id == request_id, LoanRequest.status == "pending")
+        .values(
+            status="approved",
+            resolved_at=datetime.now(timezone.utc),
+            resolved_by_user_id=current_user.id,
+        )
+    )
+    if claim.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Esta solicitação já foi resolvida por outra operação.")
     copy = _available_copy(db, book.id)
     if copy is None:
+        db.rollback()
         raise HTTPException(status_code=409, detail="Não há exemplares disponíveis. A solicitação continua pendente.")
     loan = Loan(
         student_id=student.id,
         copy_id=copy.id,
-        due_date=date.today().fromordinal(date.today().toordinal() + 7),
+        due_date=date.today() + timedelta(days=7),
         status="active",
+        created_by_user_id=current_user.id,
     )
-    request_obj.status = "approved"
-    request_obj.resolved_at = datetime.now(timezone.utc)
-    # Save the acting librarian in the audit field when available from the authenticated principal.
-    from app.core.security import require_librarian
-    librarian = require_librarian
     db.add(loan)
     try:
         db.commit()
@@ -590,6 +602,7 @@ def confirm_loan_request(
 @admin_router.post("/loan-requests/{request_id}/reject", response_model=LoanRequestOut)
 def reject_loan_request(
     request_id: int,
+    current_user: User = Depends(require_librarian),
     db: Session = Depends(get_db),
 ):
     request_obj = db.scalar(
@@ -603,6 +616,7 @@ def reject_loan_request(
         raise HTTPException(status_code=409, detail="Esta solicitação já foi resolvida.")
     request_obj.status = "rejected"
     request_obj.resolved_at = datetime.now(timezone.utc)
+    request_obj.resolved_by_user_id = current_user.id
     try:
         db.commit()
         db.refresh(request_obj)
