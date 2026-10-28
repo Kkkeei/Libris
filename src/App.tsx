@@ -20,6 +20,7 @@ function signOut(){sessionStorage.removeItem(TOKEN_KEY);sessionStorage.removeIte
 function Shell({children}:{children:ReactNode}) {
   const [menuOpen,setMenuOpen]=useState(false)
   const location=useLocation()
+  useEffect(()=>{const expired=()=>window.location.assign('/entrar');window.addEventListener('libris-session-expired',expired);return()=>window.removeEventListener('libris-session-expired',expired)},[])
   const links=[['/dashboard','Visão geral',LayoutDashboard],['/books','Acervo',BookMarked],['/students','Alunos',Users],['/classes','Turmas',GraduationCap],['/loans','Empréstimos',RotateCcw],['/loan-requests','Solicitações',ClipboardCheck]] as const
   const title=links.find(([to])=>to===location.pathname)?.[1] ?? 'Libris'
   return <div className="app-shell">
