@@ -368,15 +368,15 @@ class Libris(ctk.CTk):
         self.ltable.pack(fill="both",expand=True)
 
     def rank_ui(self,parent):
-        self.section_title(parent,"Ranking da biblioteca","Descubra os leitores mais ativos e os livros mais procurados.")
+        self.section_title(parent,"Leitura e ranking","Use os dados da biblioteca para reconhecer a participação na leitura — sem expor histórico individual no painel.")
         grid=ctk.CTkFrame(parent,fg_color="transparent"); grid.pack(fill="both",expand=True)
         left=self.panel(grid); left.pack(side="left",fill="both",expand=True,padx=(0,10))
         right=self.panel(grid); right.pack(side="left",fill="both",expand=True,padx=(10,0))
-        ctk.CTkLabel(left,text="🏆  Leitores mais ativos",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=18,pady=(18,3))
-        ctk.CTkLabel(left,text="Empréstimos já devolvidos",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=18,pady=(0,12))
+        ctk.CTkLabel(left,text="🏆  Progresso anual dos leitores",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=18,pady=(18,3))
+        ctk.CTkLabel(left,text="Livros devolvidos este ano / meta individual",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=18,pady=(0,12))
         ctk.CTkLabel(right,text="📚  Livros em destaque",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=18,pady=(18,3))
         ctk.CTkLabel(right,text="Total de empréstimos registrados",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=18,pady=(0,12))
-        self.rr=self.table(left,("Posição","Leitor","Devolvidos"),height=14); self.rr.pack(fill="both",expand=True,padx=12,pady=(0,14))
+        self.rr=self.table(left,("Posição","Leitor","Progresso (meta)"),height=14); self.rr.pack(fill="both",expand=True,padx=12,pady=(0,14))
         self.rb=self.table(right,("Posição","Livro","Empréstimos"),height=14); self.rb.pack(fill="both",expand=True,padx=12,pady=(0,14))
 
     def open_mobile_info(self):
@@ -640,17 +640,34 @@ class Libris(ctk.CTk):
 
     def refresh(self):
         with connect() as c:
-            b=c.execute("SELECT b.id,b.title,b.author,COALESCE(b.isbn,''),COALESCE(b.column_code,''),COALESCE(CAST(b.shelf_row AS TEXT),''),b.category,CASE WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado' ELSE 'Disponível' END FROM books b ORDER BY b.title").fetchall()
-            r=c.execute("SELECT id,name,registration,phone FROM readers ORDER BY name").fetchall()
-            l=c.execute("SELECT l.id,b.title,r.name,l.loan_date,l.due_date,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date",(date.today().isoformat(),)).fetchall()
-            counts=[c.execute("SELECT COUNT(*) FROM books").fetchone()[0],c.execute("SELECT COUNT(*) FROM readers").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL AND due_date<?",(date.today().isoformat(),)).fetchone()[0]]
-            rr=c.execute("SELECT r.name,COUNT(*) n FROM loans l JOIN readers r ON r.id=l.reader_id WHERE l.returned_at IS NOT NULL GROUP BY r.id ORDER BY n DESC LIMIT 10").fetchall()
-            rb=c.execute("SELECT b.title,COUNT(*) n FROM loans l JOIN books b ON b.id=l.book_id GROUP BY b.id ORDER BY n DESC LIMIT 10").fetchall()
+            b=c.execute("""SELECT b.id,COALESCE(b.accession_code,''),b.title,b.author,COALESCE(b.isbn,''),
+                COALESCE(b.column_code,''),COALESCE(CAST(b.shelf_row AS TEXT),''),COALESCE(b.category,''),
+                CASE WHEN COALESCE(b.condition_status,'Bom')!='Bom' THEN b.condition_status
+                     WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado'
+                     ELSE 'Disponível' END FROM books b ORDER BY b.title,b.accession_code""").fetchall()
+            r=c.execute("SELECT id,name,registration,class_name,phone,reading_goal FROM readers ORDER BY class_name,name").fetchall()
+            l=c.execute("""SELECT l.id,b.title,r.name,l.loan_date,l.due_date,COALESCE(l.renewals,0),
+                CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END
+                FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id
+                ORDER BY l.returned_at IS NULL DESC,l.due_date""",(date.today().isoformat(),)).fetchall()
+            counts=[c.execute("SELECT COUNT(*) FROM books").fetchone()[0],c.execute("SELECT COUNT(*) FROM readers").fetchone()[0],
+                c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL").fetchone()[0],
+                c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL AND due_date<?",(date.today().isoformat(),)).fetchone()[0]]
+            rr=c.execute("""SELECT r.name,COALESCE(r.reading_goal,12) goal,COUNT(l.id) n FROM readers r
+                LEFT JOIN loans l ON l.reader_id=r.id AND l.returned_at IS NOT NULL AND substr(l.returned_at,1,4)=?
+                GROUP BY r.id ORDER BY n DESC,r.name LIMIT 10""",(str(date.today().year),)).fetchall()
+            rb=c.execute("SELECT b.title,COUNT(*) n FROM loans l JOIN books b ON b.id=l.book_id GROUP BY b.title ORDER BY n DESC,b.title LIMIT 10").fetchall()
+            q=c.execute("""SELECT q.id,COALESCE(b.accession_code,''),b.title,r.name,r.registration,q.request_date,q.status
+                FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id
+                ORDER BY CASE q.status WHEN 'Disponível para retirada' THEN 0 WHEN 'Na fila' THEN 1 ELSE 2 END,q.request_date,q.id""").fetchall()
         self.fill(self.btable,b); self.fill(self.rtable,r); self.fill(self.ltable,l)
-        self.m_books.configure(text=str(counts[0])); self.m_readers.configure(text=str(counts[1])); self.m_loans.configure(text=str(counts[2])); self.m_late.configure(text=str(counts[3]))
-        self.fill(self.rr,[(f"{i+1:02}",x["name"],x["n"]) for i,x in enumerate(rr)])
+        self.m_books.configure(text=str(counts[0])); self.m_readers.configure(text=str(counts[1]))
+        self.m_loans.configure(text=str(counts[2])); self.m_late.configure(text=str(counts[3]))
+        self.fill(self.rr,[(f"{i+1:02}",x["name"],str(x["n"])+"/"+str(x["goal"])) for i,x in enumerate(rr)])
         self.fill(self.rb,[(f"{i+1:02}",x["title"],x["n"]) for i,x in enumerate(rb)])
-        self.fill(self.recent_table,[(x[1],x[2],x[4],x[5]) for x in l[:8]])
+        self.fill(self.recent_table,[(x[1],x[2],x[4],x[6]) for x in l[:8]])
+        if hasattr(self,"qtable"):
+            self.fill(self.qtable,q)
 
 if __name__=="__main__":
     init_db()
