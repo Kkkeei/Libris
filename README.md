@@ -1,29 +1,41 @@
-# Libris — biblioteca local com ranking
+# Libris Desktop
 
-Aplicação Python, Flask e SQLite para Linux Mint, com site responsivo e acesso pelo celular via QR Code.
+Aplicativo desktop de biblioteca feito em Python (Tkinter + SQLite), com painel visual e opção de empréstimo pelo celular via QR Code.
 
 ## Recursos
-- Cadastro e busca de livros por ISBN/código de barras.
-- Cadastro de leitores e matrícula.
-- Empréstimos, controle de exemplares, devoluções e atrasos.
-- Site móvel para registrar empréstimos pelo celular; câmera quando suportada pelo navegador e entrada manual alternativa.
-- QR Code no painel para abrir o site móvel na mesma rede.
-- Ranking Top 10 de leitores (empréstimos devolvidos) e livros mais emprestados.
-- Banco SQLite persistente em `data/libris.db`.
+- Cadastro de livros e leitores.
+- Empréstimos, devoluções e alerta de atraso.
+- Ranking dos leitores mais ativos e livros mais emprestados.
+- Página mobile na rede local para registrar empréstimos e pesquisar livros.
+- Banco de dados local persistente, independente do executável.
 
-## Instalar no Linux Mint
+## Linux Mint
+Instale dependências do sistema:
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv python3-pip
+sudo apt install -y python3 python3-venv python3-tk python3-pip
+```
+Execute em modo desenvolvimento:
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
 ```
-Abra http://127.0.0.1:8765. Celular e computador precisam estar na mesma rede Wi-Fi ou hotspot. Se necessário, libere TCP 8765 no firewall.
+Gere o executável:
+```bash
+chmod +x gerar_executavel_linux.sh
+./gerar_executavel_linux.sh
+```
+O executável será gerado em `dist/Libris`.
 
-## Ranking
-Leitores são classificados por empréstimos devolvidos; livros pelo total de empréstimos. Empates em ordem alfabética.
+## Windows
+Instale Python 3.11+ e marque “Add Python to PATH”. Execute `gerar_executavel_windows.bat`. O arquivo ficará em `dist\Libris\Libris.exe`.
 
-## Segurança
-Versão local inicial sem autenticação. Não exponha à internet; faça backup de `data/`. Alguns navegadores exigem HTTPS para a câmera; nesse caso use entrada manual ou leitor USB.
+**Atenção:** o executável deve ser compilado no próprio sistema de destino. Para gerar um EXE Windows, rode o script no Windows.
+
+## QR Code e celular
+Conecte celular e computador à mesma rede Wi-Fi e leia o QR Code no painel. Se a câmera não funcionar pelo endereço HTTP, digite o ISBN manualmente. Não exponha a porta 8765 à internet; o servidor mobile foi pensado para uma rede local confiável.
+
+## Dados e backup
+O banco fica em `~/.local/share/libris/libris.db` no Linux ou em `%LOCALAPPDATA%\Libris\libris.db` no Windows. Faça backup regularmente.

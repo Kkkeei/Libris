@@ -1,96 +1,174 @@
-import io, os, socket, sqlite3
+import os, sys, sqlite3, socket, threading, webbrowser
 from pathlib import Path
 from datetime import date, timedelta
-from flask import Flask, request, redirect, url_for, flash, render_template_string, jsonify, send_file
-import qrcode
-app=Flask(__name__); app.secret_key=os.environ.get("LIBRIS_SECRET_KEY","troque-esta-chave-local")
-DATA=Path(os.environ.get("LIBRIS_DATA_DIR",Path(__file__).resolve().parent/"data")); DATA.mkdir(parents=True,exist_ok=True); DB=DATA/"libris.db"
-def db():
- c=sqlite3.connect(DB,timeout=10); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
-with db() as c:c.executescript("""CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY,title TEXT NOT NULL,author TEXT DEFAULT '',code TEXT NOT NULL UNIQUE,copies INTEGER NOT NULL DEFAULT 1 CHECK(copies>0)); CREATE TABLE IF NOT EXISTS readers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,enrollment TEXT DEFAULT ''); CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY,book_id INTEGER NOT NULL REFERENCES books(id),reader_id INTEGER NOT NULL REFERENCES readers(id),due TEXT NOT NULL,returned TEXT);""")
-def ip():
- s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
- try:s.connect(("192.0.2.1",80));return s.getsockname()[0]
- except OSError:return "127.0.0.1"
- finally:s.close()
-def br(s):
- try:return date.fromisoformat(s[:10]).strftime("%d/%m/%Y")
- except:return s or "—"
-app.jinja_env.filters["br"]=br
-BASE="""<!doctype html><html lang=pt-BR><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Libris</title><style>body{margin:0;background:#f4f7f5;color:#1a302a;font:15px system-ui}header{background:white;padding:16px max(14px,calc((100% - 1050px)/2));border-bottom:1px solid #dfe8e2;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}header b{font-size:20px}nav{display:flex;gap:14px;flex-wrap:wrap}a{color:#24594b;text-decoration:none;font-weight:700;font-size:13px}main{max-width:1050px;margin:28px auto;padding:0 16px}h1{font-size:34px;letter-spacing:-1px}h2{font-size:19px}.muted,small,.hint{color:#718079}.panel,.stat{background:white;border:1px solid #e0e8e3;border-radius:14px;padding:18px;min-width:0}.cols{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin:16px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.stat small{display:block}.stat strong{font-size:28px}.form{display:grid;gap:12px}label{display:grid;gap:6px;font-size:12px;font-weight:700}input,select{padding:11px;border:1px solid #d6e2da;border-radius:8px;width:100%;box-sizing:border-box;font:14px system-ui}.btn{background:#163a32;color:white;border:0;border-radius:9px;padding:11px 14px;font-weight:700;cursor:pointer}.secondary{background:#eaf1ed;color:#163a32}.item,.rank{padding:12px 0;border-bottom:1px solid #edf1ee}.item small{display:block;margin-top:4px}.rank{display:flex;align-items:center;gap:10px}.rank span{background:#e7f2ed;border-radius:8px;padding:9px 12px;font-weight:800}.rank div{flex:1}.rank small{display:block;font-size:11px}.empty{text-align:center;padding:20px;color:#718079}.alert{padding:11px;background:#e7f5eb;border-radius:8px;margin:8px 0}.error{background:#fff0ed;color:#963c32}.qr{text-align:center}.qr img{width:150px;height:150px}.qr code{display:block;font-size:11px;overflow-wrap:anywhere}video{width:100%;max-height:240px;background:#12251f;border-radius:10px}@media(max-width:700px){.cols{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}main{padding:0 12px}header{flex-direction:column}}</style><header><b><a href='/'>Libris · Biblioteca</a></b><nav><a href='/books'>Livros</a><a href='/readers'>Leitores</a><a href='/loans'>Empréstimos</a><a href='/ranking'>🏆 Ranking</a></nav></header><main>{% for cat,msg in get_flashed_messages(with_categories=true) %}<div class='alert {{cat}}'>{{msg}}</div>{% endfor %}{{body|safe}}</main><footer style='text-align:center;padding:24px;color:#84938a;font-size:11px'>Libris · dados locais SQLite · faça backup</footer></html>"""
-def page(t,**k):return render_template_string(BASE,body=render_template_string(t,**k))
-@app.get("/")
-def home():
- with db() as c:
-  stats=[("Livros",c.execute("select count(*) from books").fetchone()[0]),("Leitores",c.execute("select count(*) from readers").fetchone()[0]),("Em aberto",c.execute("select count(*) from loans where returned is null").fetchone()[0]),("Atrasados",c.execute("select count(*) from loans where returned is null and due<date('now','localtime')").fetchone()[0])]
-  rows=c.execute("select l.*,b.title,r.name reader from loans l join books b on b.id=l.book_id join readers r on r.id=l.reader_id where returned is null order by l.id desc limit 8").fetchall()
- return page("""<p class=muted>GESTÃO DA BIBLIOTECA</p><h1>Bem-vindo ao Libris</h1><p class=muted>Acervo, leitores, empréstimos e incentivo à leitura.</p><section class=stats>{% for n,v in stats %}<div class=stat><small>{{n}}</small><strong>{{v}}</strong></div>{% endfor %}</section><div class=cols><section class=panel><h2>Empréstimos em aberto</h2>{% for l in rows %}<div class=item><b>{{l.title}}</b><small>{{l.reader}} · devolver até {{l.due|br}}</small></div>{% else %}<p class=empty>Nenhum empréstimo aberto.</p>{% endfor %}</section><section class='panel qr'><h2>Acesso pelo celular</h2><p class=muted>Celular e computador na mesma rede Wi-Fi.</p><img src=/qr.png><code>http://{{ip}}:8765/mobile</code></section></div>""",stats=stats,rows=rows,ip=ip())
-@app.route("/books",methods=["GET","POST"])
-def books():
- if request.method=="POST":
-  try:
-   with db() as c:c.execute("insert into books(title,author,code,copies) values(?,?,?,?)",(request.form["title"].strip(),request.form.get("author","").strip(),''.join(x for x in request.form["code"].strip() if x.isalnum()),max(1,int(request.form.get("copies",1)))))
-   flash("Livro cadastrado.")
-  except sqlite3.IntegrityError:flash("Código duplicado ou dados inválidos.","error")
-  return redirect(url_for("books"))
- q=request.args.get("q","")
- with db() as c:rows=c.execute("select b.*,copies-(select count(*) from loans l where l.book_id=b.id and returned is null) available from books b where title like ? or author like ? or code like ? order by title",(f"%{q}%",f"%{q}%",f"%{q}%")).fetchall()
- return page("""<h1>Livros</h1><div class=cols><section class=panel><h2>Cadastrar livro</h2><form class=form method=post><label>Título<input name=title required></label><label>Autor<input name=author></label><label>ISBN / código de barras<input name=code required></label><label>Exemplares<input name=copies type=number min=1 value=1></label><button class=btn>Cadastrar</button></form></section><section class=panel><h2>Acervo</h2><form><input name=q value='{{q}}' placeholder=Buscar><button class='btn secondary'>Buscar</button></form>{% for b in rows %}<div class=item><b>{{b.title}}</b><small>{{b.author}} · {{b.code}} · {{b.available}} disponível(is)</small></div>{% else %}<p class=empty>Nenhum livro cadastrado.</p>{% endfor %}</section></div>""",rows=rows,q=q)
-@app.route("/readers",methods=["GET","POST"])
-def readers():
- if request.method=="POST":
-  with db() as c:c.execute("insert into readers(name,enrollment) values(?,?)",(request.form["name"].strip(),request.form.get("enrollment","").strip()))
-  flash("Leitor cadastrado.");return redirect(url_for("readers"))
- q=request.args.get("q","")
- with db() as c:rows=c.execute("select r.*,(select count(*) from loans l where l.reader_id=r.id and returned is null) opened from readers r where name like ? or enrollment like ? order by name",(f"%{q}%",f"%{q}%")).fetchall()
- return page("""<h1>Leitores</h1><div class=cols><section class=panel><h2>Cadastrar leitor</h2><form class=form method=post><label>Nome completo<input name=name required></label><label>Matrícula<input name=enrollment></label><button class=btn>Cadastrar</button></form></section><section class=panel><h2>Leitores cadastrados</h2><form><input name=q value='{{q}}' placeholder=Buscar><button class='btn secondary'>Buscar</button></form>{% for r in rows %}<div class=item><b>{{r.name}}</b><small>{{r.enrollment or 'Sem matrícula'}} · {{r.opened}} empréstimo(s) em aberto</small></div>{% else %}<p class=empty>Nenhum leitor cadastrado.</p>{% endfor %}</section></div>""",rows=rows,q=q)
-def lend(code,rid,due):
- try:date.fromisoformat(due)
- except:return False,"Data inválida.",400
- with db() as c:
-  b=c.execute("select * from books where upper(code)=upper(?)",(''.join(x for x in (code or '') if x.isalnum()),)).fetchone();r=c.execute("select * from readers where id=?",(rid,)).fetchone()
-  if not b:return False,"Livro não cadastrado.",404
-  if not r:return False,"Selecione um leitor.",400
-  if c.execute("select count(*) from loans where book_id=? and returned is null",(b["id"],)).fetchone()[0]>=b["copies"]:return False,"Sem exemplares disponíveis.",409
-  c.execute("insert into loans(book_id,reader_id,due) values(?,?,?)",(b["id"],rid,due))
- return True,"Empréstimo registrado!",200
-@app.route("/loans",methods=["GET","POST"])
-def loans():
- if request.method=="POST":
-  with db() as c:b=c.execute("select code from books where id=?",(request.form.get("book_id"),)).fetchone()
-  ok,m,_=lend(b["code"] if b else "",request.form.get("reader_id"),request.form.get("due",""));flash(m,"" if ok else "error");return redirect(url_for("loans"))
- with db() as c:
-  rows=c.execute("select l.*,b.title,r.name reader,case when due<date('now','localtime') then 1 else 0 end late from loans l join books b on b.id=l.book_id join readers r on r.id=l.reader_id where returned is null order by due").fetchall()
-  bs=c.execute("select b.id,b.title,copies-(select count(*) from loans l where l.book_id=b.id and returned is null) available from books b").fetchall();rs=c.execute("select * from readers order by name").fetchall()
- return page("""<h1>Empréstimos</h1><div class=cols><section class=panel><h2>Novo empréstimo</h2><form class=form method=post><label>Livro<select name=book_id required><option value=''>Selecione</option>{% for b in bs %}<option value={{b.id}} {% if b.available<=0 %}disabled{% endif %}>{{b.title}} · {{b.available}} disponível(is)</option>{% endfor %}</select></label><label>Leitor<select name=reader_id required><option value=''>Selecione</option>{% for r in rs %}<option value={{r.id}}>{{r.name}}</option>{% endfor %}</select></label><label>Devolução<input name=due type=date value='{{due}}' required></label><button class=btn>Registrar empréstimo</button></form></section><section class=panel><h2>Em aberto · {{rows|length}}</h2>{% for l in rows %}<div class=item><b>{{l.title}}</b><small>{{l.reader}} · {{l.due|br}} {% if l.late %}· ATRASADO{% endif %}</small><form method=post action='/loans/{{l.id}}/return'><button class='btn secondary'>Registrar devolução</button></form></div>{% else %}<p class=empty>Nenhum empréstimo aberto.</p>{% endfor %}</section></div>""",rows=rows,bs=bs,rs=rs,due=(date.today()+timedelta(days=14)).isoformat())
-@app.post("/loans/<int:i>/return")
-def ret(i):
- with db() as c:n=c.execute("update loans set returned=date('now','localtime') where id=? and returned is null",(i,)).rowcount
- flash("Devolução registrada." if n else "Empréstimo já devolvido.","" if n else "error");return redirect(url_for("loans"))
-@app.get("/ranking")
-def ranking():
- with db() as c:
-  readers=c.execute("select r.name,r.enrollment,count(l.id) score from readers r join loans l on l.reader_id=r.id and l.returned is not null group by r.id order by score desc,r.name collate nocase limit 10").fetchall()
-  books=c.execute("select b.title,b.author,count(l.id) score from books b join loans l on l.book_id=b.id group by b.id order by score desc,b.title collate nocase limit 10").fetchall()
-  total=c.execute("select count(*) from loans where returned is not null").fetchone()[0];n=c.execute("select count(distinct reader_id) from loans where returned is not null").fetchone()[0]
- return page("""<p class=muted>INCENTIVO À LEITURA</p><h1>🏆 Ranking da biblioteca</h1><section class=stats><div class=stat><small>Devoluções concluídas</small><strong>{{total}}</strong></div><div class=stat><small>Leitores ranqueados</small><strong>{{n}}</strong></div></section><div class=cols><section class=panel><h2>Top 10 leitores</h2>{% for r in readers %}<div class=rank><span>{{loop.index}}</span><div><b>{{r.name}}</b><small>{{r.enrollment or 'Sem matrícula'}}</small></div><strong>{{r.score}} <small>livro(s)</small></strong></div>{% else %}<p class=empty>O ranking aparece após devoluções.</p>{% endfor %}</section><section class=panel><h2>Top 10 livros</h2>{% for b in books %}<div class=rank><span>{{loop.index}}</span><div><b>{{b.title}}</b><small>{{b.author or 'Autor não informado'}}</small></div><strong>{{b.score}} <small>vez(es)</small></strong></div>{% else %}<p class=empty>O ranking aparece após empréstimos.</p>{% endfor %}</section></div><p class=hint>Leitores: empréstimos devolvidos. Livros: total emprestado. Empates por ordem alfabética.</p>""",readers=readers,books=books,total=total,n=n)
-@app.get("/mobile")
-def mobile():
- with db() as c:rs=c.execute("select * from readers order by name").fetchall();bs=c.execute("select title,code,copies-(select count(*) from loans l where l.book_id=b.id and returned is null) available from books b order by title").fetchall()
- return page("""<div style='max-width:600px;margin:auto'><h1>Empréstimo pelo celular</h1><section class=panel><h2>Leitura de código de barras</h2><video id=v playsinline></video><p><button id=start class=btn>Abrir câmera</button> <button id=stop class='btn secondary'>Parar</button></p><p id=msg class=hint>Se a câmera não funcionar, digite o ISBN.</p><label>Código / ISBN<input id=code></label><button id=find class='btn secondary'>Buscar livro</button><div id=book></div><label>Leitor<select id=reader><option value=''>Selecione</option>{% for r in rs %}<option value={{r.id}}>{{r.name}}</option>{% endfor %}</select></label><label>Devolução<input id=due type=date value='{{due}}'></label><button id=send class=btn>Registrar empréstimo</button><div id=result></div></section><section class=panel><h2>Livros</h2>{% for b in bs %}<div class=item><button class='btn secondary pick' data-code='{{b.code}}'>{{b.title}} · {{b.available}} disponível(is)</button></div>{% endfor %}</section></div><script>let found=null,stream=null,det=null,active=false;const $=x=>document.getElementById(x);function stop(){active=false;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('v').srcObject=null}async function find(){let r=await fetch('/api/book?code='+encodeURIComponent($('code').value)),d=await r.json();found=r.ok?d.book:null;$('book').textContent=r.ok?d.book.title+' · disponíveis '+d.book.available:d.message}$('find').onclick=find;document.querySelectorAll('.pick').forEach(b=>b.onclick=()=>{$('code').value=b.dataset.code;find()});$('start').onclick=async()=>{if(!('BarcodeDetector'in window)||!navigator.mediaDevices){$('msg').textContent='Câmera indisponível neste navegador; digite o código.';return}try{det=new BarcodeDetector({formats:['ean_13','ean_8','code_128','upc_a']});stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});$('v').srcObject=stream;await $('v').play();active=true;scan()}catch{$('msg').textContent='Permita acesso à câmera ou digite o ISBN.'}};async function scan(){if(!active)return;try{let a=await det.detect($('v'));if(a[0]){$('code').value=a[0].rawValue;stop();find();return}}catch{}requestAnimationFrame(scan)}$('stop').onclick=stop;$('send').onclick=async()=>{if(!found){$('result').textContent='Busque um livro primeiro.';return}let r=await fetch('/api/mobile-loan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('code').value,reader_id:$('reader').value,due:$('due').value})}),d=await r.json();$('result').textContent=d.message;if(r.ok){found=null;$('code').value='';$('book').textContent='';$('reader').value=''}};document.querySelectorAll('.pick');$('due').value=new Date(Date.now()+14*86400000).toISOString().slice(0,10);window.addEventListener('pagehide',stop)</script>""",rs=rs,bs=bs,due=(date.today()+timedelta(days=14)).isoformat())
-@app.get("/qr.png")
-def qr():
- b=io.BytesIO();qrcode.make(f"http://{ip()}:8765/mobile").save(b,format="PNG");b.seek(0);return send_file(b,mimetype="image/png")
-@app.get("/api/book")
-def api_book():
- with db() as c:b=c.execute("select b.id,b.title,b.author,b.code,b.copies-(select count(*) from loans l where l.book_id=b.id and returned is null) available from books b where upper(code)=upper(?)",(''.join(x for x in request.args.get("code","") if x.isalnum()),)).fetchone()
- return (jsonify(book=dict(b)),200) if b else (jsonify(message="Livro não cadastrado."),404)
-@app.post("/api/mobile-loan")
-def api_loan():
- d=request.get_json(silent=True) or {};ok,m,s=lend(d.get("code"),d.get("reader_id"),d.get("due",""));return jsonify(message=m),s
-@app.get("/health")
-def health():return jsonify(status="ok")
+import tkinter as tk
+from tkinter import ttk, messagebox
+try:
+    import qrcode
+    from PIL import ImageTk
+except ImportError:
+    qrcode = ImageTk = None
+try:
+    from flask import Flask, request, jsonify, render_template_string
+    from waitress import serve
+except ImportError:
+    Flask = None
+
+PORT = 8765
+def data_dir():
+    p = (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "Libris") if sys.platform == "win32" else Path(os.getenv("XDG_DATA_HOME", str(Path.home()/".local/share"))) / "libris"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+DB = data_dir() / "libris.db"
+def connect():
+    c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+def init_db():
+    with connect() as c:
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY,title TEXT NOT NULL,author TEXT DEFAULT '',isbn TEXT UNIQUE,category TEXT DEFAULT '');
+        CREATE TABLE IF NOT EXISTS readers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,registration TEXT UNIQUE,phone TEXT DEFAULT '');
+        CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY,book_id INTEGER NOT NULL REFERENCES books(id),reader_id INTEGER NOT NULL REFERENCES readers(id),loan_date TEXT NOT NULL,due_date TEXT NOT NULL,returned_at TEXT);
+        """)
+def ip_address():
+    s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    try: s.connect(("8.8.8.8",80)); return s.getsockname()[0]
+    except OSError: return "127.0.0.1"
+    finally: s.close()
+
+def make_web():
+    if Flask is None: return None
+    web=Flask("libris_mobile")
+    page="""<!doctype html><html lang=pt-br><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Libris Mobile</title>
+    <style>body{font:16px system-ui;background:#f2f5fa;color:#172033;margin:0}.wrap{max-width:540px;margin:auto;padding:20px}.card{background:white;border-radius:16px;padding:20px;margin:14px 0}input,button{font:inherit;box-sizing:border-box;width:100%;padding:12px;margin:6px 0;border-radius:9px;border:1px solid #ccd3df}button{background:#2449a5;color:white;border:0;font-weight:bold}.ok{color:green}.err{color:#b42318}</style>
+    <div class=wrap><h1>📚 Libris</h1><p>Empréstimo pelo celular na mesma rede Wi-Fi.</p><div class=card><h3>Novo empréstimo</h3><form id=f><label>ISBN do livro</label><input id=isbn required><label>Matrícula do leitor</label><input id=reg required><label>Devolução prevista</label><input id=due type=date required><button>Registrar empréstimo</button></form><p id=msg></p></div><div class=card><h3>Pesquisar livro</h3><input id=q placeholder="Título, autor ou ISBN"><button onclick=searchBook()>Pesquisar</button><div id=results></div></div></div>
+    <script>document.getElementById('due').value=new Date(Date.now()+12096e5).toISOString().slice(0,10);document.getElementById('f').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/mobile-loan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({isbn:document.getElementById('isbn').value.trim(),registration:document.getElementById('reg').value.trim(),due:document.getElementById('due').value})});let j=await r.json();let m=document.getElementById('msg');m.className=j.ok?'ok':'err';m.textContent=j.message};async function searchBook(){let r=await fetch('/api/book?q='+encodeURIComponent(document.getElementById('q').value));let j=await r.json();document.getElementById('results').innerHTML=j.books.length?j.books.map(b=>'<p><b>'+b.title+'</b><br>'+b.author+' · ISBN '+(b.isbn||'—')+'</p>').join(''):'Nenhum livro encontrado.'}</script></html>"""
+    @web.get("/mobile")
+    def mobile(): return render_template_string(page)
+    @web.get("/api/book")
+    def books_search():
+        q=request.args.get("q","")
+        with connect() as c: rows=c.execute("SELECT title,author,isbn FROM books WHERE title LIKE ? OR author LIKE ? OR isbn LIKE ? ORDER BY title LIMIT 30",("%"+q+"%","%"+q+"%","%"+q+"%")).fetchall()
+        return jsonify(books=[dict(r) for r in rows])
+    @web.post("/api/mobile-loan")
+    def mobile_loan():
+        d=request.get_json(silent=True) or {}; isbn=(d.get("isbn") or "").strip(); reg=(d.get("registration") or "").strip()
+        try:
+            due=date.fromisoformat(d.get("due",""))
+            if due<date.today(): raise ValueError()
+        except ValueError: return jsonify(ok=False,message="Informe uma data de devolução válida."),400
+        with connect() as c:
+            b=c.execute("SELECT * FROM books WHERE isbn=?",(isbn,)).fetchone(); r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
+            if not b: return jsonify(ok=False,message="ISBN não encontrado."),404
+            if not r: return jsonify(ok=False,message="Matrícula não encontrada."),404
+            if c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(b["id"],)).fetchone(): return jsonify(ok=False,message="Este livro já está emprestado."),409
+            c.execute("INSERT INTO loans(book_id,reader_id,loan_date,due_date) VALUES(?,?,?,?)",(b["id"],r["id"],date.today().isoformat(),due.isoformat()))
+        return jsonify(ok=True,message="Empréstimo registrado para "+r["name"]+".")
+    return web
+
+class Libris(tk.Tk):
+    def __init__(self):
+        super().__init__(); self.title("Libris — Biblioteca"); self.geometry("1100x720"); self.minsize(850,560); self.configure(bg="#f2f5fa")
+        st=ttk.Style(self); st.theme_use("clam"); st.configure("TFrame",background="#f2f5fa"); st.configure("TLabel",background="#f2f5fa",foreground="#172033",font=("Arial",10)); st.configure("Head.TLabel",font=("Arial",22,"bold")); st.configure("Treeview",rowheight=28); st.configure("Treeview.Heading",font=("Arial",10,"bold"))
+        init_db(); self.web=make_web()
+        if self.web: threading.Thread(target=lambda:serve(self.web,host="0.0.0.0",port=PORT,threads=4),daemon=True).start()
+        self.draw()
+    def draw(self):
+        top=ttk.Frame(self,padding=18); top.pack(fill="x"); ttk.Label(top,text="📚 LIBRIS",style="Head.TLabel").pack(side="left"); ttk.Label(top,text="Gestão de biblioteca").pack(side="left",padx=15,pady=10)
+        self.tabs=ttk.Notebook(self); self.tabs.pack(fill="both",expand=True,padx=20,pady=(0,20))
+        self.home=ttk.Frame(self.tabs,padding=18); self.tabs.add(self.home,text="Visão geral"); self.home_ui()
+        self.bt=ttk.Frame(self.tabs,padding=18); self.tabs.add(self.bt,text="Livros"); self.book_ui()
+        self.rt=ttk.Frame(self.tabs,padding=18); self.tabs.add(self.rt,text="Leitores"); self.reader_ui()
+        self.lt=ttk.Frame(self.tabs,padding=18); self.tabs.add(self.lt,text="Empréstimos"); self.loan_ui()
+        self.rk=ttk.Frame(self.tabs,padding=18); self.tabs.add(self.rk,text="Ranking"); self.rank_ui(); self.refresh()
+    def table(self,parent,cols):
+        f=ttk.Frame(parent); f.pack(fill="both",expand=True,pady=10); t=ttk.Treeview(f,columns=cols,show="headings")
+        sy=ttk.Scrollbar(f,orient="vertical",command=t.yview); t.configure(yscrollcommand=sy.set); t.grid(row=0,column=0,sticky="nsew"); sy.grid(row=0,column=1,sticky="ns"); f.rowconfigure(0,weight=1); f.columnconfigure(0,weight=1)
+        for col in cols: t.heading(col,text=col); t.column(col,width=135)
+        return t
+    def home_ui(self):
+        ttk.Label(self.home,text="Painel da biblioteca",style="Head.TLabel").pack(anchor="w")
+        self.stat=ttk.Label(self.home,text="",font=("Arial",14,"bold")); self.stat.pack(anchor="w",pady=16)
+        url="http://"+ip_address()+":"+str(PORT)+"/mobile"
+        ttk.Label(self.home,text="EMPRÉSTIMO PELO CELULAR",font=("Arial",13,"bold")).pack(anchor="w",pady=(15,4))
+        ttk.Label(self.home,text="Celular e computador precisam estar na mesma rede Wi-Fi.").pack(anchor="w")
+        ttk.Label(self.home,text=url,font=("Arial",11)).pack(anchor="w",pady=5)
+        self.qrl=ttk.Label(self.home); self.qrl.pack(anchor="w",pady=8)
+        if qrcode and ImageTk:
+            self.qr=ImageTk.PhotoImage(qrcode.make(url).resize((170,170))); self.qrl.configure(image=self.qr)
+        ttk.Button(self.home,text="Abrir página mobile neste computador",command=lambda:webbrowser.open("http://127.0.0.1:"+str(PORT)+"/mobile")).pack(anchor="w",pady=8)
+    def book_ui(self):
+        ttk.Label(self.bt,text="Catálogo de livros",style="Head.TLabel").pack(anchor="w")
+        self.bv=[tk.StringVar() for _ in range(4)]; self.inputs(self.bt,[("Título",self.bv[0]),("Autor",self.bv[1]),("ISBN / código",self.bv[2]),("Categoria",self.bv[3])],"Adicionar livro",self.add_book)
+        self.btable=self.table(self.bt,("ID","Título","Autor","ISBN","Categoria","Situação"))
+    def reader_ui(self):
+        ttk.Label(self.rt,text="Cadastro de leitores",style="Head.TLabel").pack(anchor="w")
+        self.rv=[tk.StringVar() for _ in range(3)]; self.inputs(self.rt,[("Nome",self.rv[0]),("Matrícula",self.rv[1]),("Telefone",self.rv[2])],"Adicionar leitor",self.add_reader)
+        self.rtable=self.table(self.rt,("ID","Nome","Matrícula","Telefone"))
+    def inputs(self,parent,fields,button,cmd):
+        f=ttk.Frame(parent); f.pack(fill="x",pady=12)
+        for label,var in fields:
+            ttk.Label(f,text=label).pack(side="left",padx=(0,4)); ttk.Entry(f,textvariable=var,width=17).pack(side="left",padx=(0,8))
+        ttk.Button(f,text=button,command=cmd).pack(side="left")
+    def loan_ui(self):
+        ttk.Label(self.lt,text="Empréstimos e devoluções",style="Head.TLabel").pack(anchor="w")
+        self.lv=[tk.StringVar(),tk.StringVar(),tk.StringVar(value=(date.today()+timedelta(days=14)).isoformat())]
+        self.inputs(self.lt,[("ISBN",self.lv[0]),("Matrícula",self.lv[1]),("Devolver até AAAA-MM-DD",self.lv[2])],"Registrar empréstimo",self.add_loan)
+        bar=ttk.Frame(self.lt); bar.pack(fill="x"); ttk.Button(bar,text="Devolver empréstimo selecionado",command=self.return_loan).pack(anchor="w")
+        self.ltable=self.table(self.lt,("ID","Livro","Leitor","Empréstimo","Devolução prevista","Status"))
+    def rank_ui(self):
+        ttk.Label(self.rk,text="Ranking da biblioteca",style="Head.TLabel").pack(anchor="w")
+        ttk.Label(self.rk,text="Atualizado automaticamente conforme os empréstimos registrados.").pack(anchor="w",pady=5)
+        f=ttk.Frame(self.rk); f.pack(fill="both",expand=True); a=ttk.Frame(f); a.pack(side="left",fill="both",expand=True,padx=(0,8)); b=ttk.Frame(f); b.pack(side="left",fill="both",expand=True,padx=(8,0))
+        ttk.Label(a,text="🏆 Leitores mais ativos",font=("Arial",13,"bold")).pack(anchor="w"); ttk.Label(b,text="📖 Livros mais emprestados",font=("Arial",13,"bold")).pack(anchor="w")
+        self.rr=self.table(a,("Posição","Leitor","Devolvidos")); self.rb=self.table(b,("Posição","Livro","Empréstimos"))
+    def add_book(self):
+        vals=[v.get().strip() for v in self.bv]
+        if not vals[0]: messagebox.showwarning("Atenção","Informe o título."); return
+        try:
+            with connect() as c: c.execute("INSERT INTO books(title,author,isbn,category) VALUES(?,?,?,?)",(vals[0],vals[1],vals[2] or None,vals[3]))
+        except sqlite3.IntegrityError: messagebox.showerror("Cadastro","ISBN já cadastrado."); return
+        [v.set("") for v in self.bv]; self.refresh()
+    def add_reader(self):
+        vals=[v.get().strip() for v in self.rv]
+        if not vals[0] or not vals[1]: messagebox.showwarning("Atenção","Informe nome e matrícula."); return
+        try:
+            with connect() as c: c.execute("INSERT INTO readers(name,registration,phone) VALUES(?,?,?)",vals)
+        except sqlite3.IntegrityError: messagebox.showerror("Cadastro","Matrícula já cadastrada."); return
+        [v.set("") for v in self.rv]; self.refresh()
+    def add_loan(self):
+        isbn,reg,due_s=[v.get().strip() for v in self.lv]
+        try:
+            due=date.fromisoformat(due_s)
+            if due<date.today(): raise ValueError()
+        except ValueError: messagebox.showwarning("Data inválida","Informe a data no formato AAAA-MM-DD."); return
+        with connect() as c:
+            b=c.execute("SELECT * FROM books WHERE isbn=?",(isbn,)).fetchone(); r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
+            if not b: messagebox.showerror("Empréstimo","ISBN não encontrado."); return
+            if not r: messagebox.showerror("Empréstimo","Matrícula não encontrada."); return
+            if c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(b["id"],)).fetchone(): messagebox.showerror("Empréstimo","Livro já emprestado."); return
+            c.execute("INSERT INTO loans(book_id,reader_id,loan_date,due_date) VALUES(?,?,?,?)",(b["id"],r["id"],date.today().isoformat(),due.isoformat()))
+        self.refresh(); messagebox.showinfo("Libris","Empréstimo registrado.")
+    def return_loan(self):
+        sel=self.ltable.selection()
+        if not sel: messagebox.showwarning("Devolução","Selecione um empréstimo."); return
+        lid=self.ltable.item(sel[0])["values"][0]
+        with connect() as c: c.execute("UPDATE loans SET returned_at=? WHERE id=? AND returned_at IS NULL",(date.today().isoformat(),lid))
+        self.refresh()
+    def fill(self,t,rows):
+        t.delete(*t.get_children())
+        for row in rows: t.insert("","end",values=tuple(row))
+    def refresh(self):
+        with connect() as c:
+            b=c.execute("SELECT b.id,b.title,b.author,COALESCE(b.isbn,''),b.category,CASE WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado' ELSE 'Disponível' END FROM books b ORDER BY b.title").fetchall()
+            r=c.execute("SELECT id,name,registration,phone FROM readers ORDER BY name").fetchall()
+            l=c.execute("SELECT l.id,b.title,r.name,l.loan_date,l.due_date,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date",(date.today().isoformat(),)).fetchall()
+            counts=[c.execute("SELECT COUNT(*) FROM books").fetchone()[0],c.execute("SELECT COUNT(*) FROM readers").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL AND due_date<?",(date.today().isoformat(),)).fetchone()[0]]
+            rr=c.execute("SELECT r.name,COUNT(*) n FROM loans l JOIN readers r ON r.id=l.reader_id WHERE l.returned_at IS NOT NULL GROUP BY r.id ORDER BY n DESC LIMIT 10").fetchall()
+            rb=c.execute("SELECT b.title,COUNT(*) n FROM loans l JOIN books b ON b.id=l.book_id GROUP BY b.id ORDER BY n DESC LIMIT 10").fetchall()
+        self.fill(self.btable,b); self.fill(self.rtable,r); self.fill(self.ltable,l)
+        self.stat.configure(text="Livros: %s     Leitores: %s     Empréstimos ativos: %s     Atrasados: %s"%tuple(counts))
+        self.fill(self.rr,[(i+1,x["name"],x["n"]) for i,x in enumerate(rr)]); self.fill(self.rb,[(i+1,x["title"],x["n"]) for i,x in enumerate(rb)])
+
 if __name__=="__main__":
- from waitress import serve
- print(f"Libris: http://127.0.0.1:8765 | celular: http://{ip()}:8765/mobile")
- serve(app,host="0.0.0.0",port=8765)
+    init_db()
+    Libris().mainloop()
