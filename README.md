@@ -15,6 +15,16 @@ Aplicativo desktop para a rotina de biblioteca escolar, com interface moderna, b
 - Leitor de código de barras USB compatível com entrada de teclado: foco no campo de ISBN/tombo e leitura do código.
 - Empréstimos respeitam reservas liberadas: um exemplar reservado fica protegido para o leitor da fila, tanto no desktop como no celular.
 
+### Importação de documentos (livros e alunos)
+- Menu lateral **Importar arquivos** permite selecionar vários arquivos e escolher se os dados serão livros ou alunos/leitores.
+- Formatos: **PDF pesquisável, DOCX, DOC, CSV, TSV, TXT, XLSX, XLS, ODS, ODT e JSON**.
+- O sistema identifica cabeçalhos comuns em português/inglês (Título, Autor, ISBN, Tombo, Gênero, Coluna, Fileira, Nome, Matrícula, Turma, Telefone etc.).
+- A prévia lista os registros reconhecidos e marca duplicidades antes de qualquer gravação. A bibliotecária confirma a importação após conferir os dados.
+- Livros sem tombo recebem código automático. Alunos sem matrícula recebem código interno `ALU-AUTO-000001` e assim por diante.
+- Se os cabeçalhos não forem reconhecidos, use nomes de coluna claros. Para planilhas sem cabeçalho, a importação considera a ordem de campos padrão do tipo selecionado; confira a prévia com cuidado.
+- PDF precisa conter texto/tabela selecionável. PDFs digitalizados apenas como imagem exigem OCR antes de importar. Arquivos `.doc` antigos precisam de LibreOffice instalado; salvar como `.docx` também resolve.
+- Os arquivos são processados localmente no computador e não são enviados para serviços externos.
+
 ### Leitores e incentivo à leitura
 - Cadastro e edição de leitores com matrícula, turma/ano, telefone e meta anual.
 - Acompanhamento anual de empréstimos devolvidos em relação à meta de leitura.
