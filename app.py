@@ -986,7 +986,7 @@ class Libris(ctk.CTk):
             return
         if not messagebox.askyesno("Confirmar importação","Importar %d registro(s) válidos? Os registros com tombo ou matrícula duplicados serão ignorados."%len(ready)):
             return
-        imported=0; skipped=0; issues=[]
+        imported=0; skipped=0; issues=[]; activity_events=[]
         try:
             with connect() as c:
                 for item in ready:
@@ -1020,7 +1020,7 @@ class Libris(ctk.CTk):
                             c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
                                 VALUES(?,?,?,?,?,?,?,?)""",(title,(item.get("author") or "").strip(),(item.get("isbn") or "").strip() or None,(item.get("category") or "").strip(),column,shelf_row,accession,condition))
                             book_id=c.execute("SELECT id FROM books WHERE accession_code=?",(accession,)).fetchone()[0]
-                            log_action("IMPORTACAO","livro",book_id,"Exemplar importado de "+item.get("_source","documento"))
+                            activity_events.append(("livro",book_id,"Exemplar importado de "+item.get("_source","documento")))
                         else:
                             name=(item.get("name") or "").strip()
                             if not name:
@@ -1039,11 +1039,13 @@ class Libris(ctk.CTk):
                             c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
                                 (name,registration,(item.get("class_name") or "").strip(),(item.get("phone") or "").strip(),goal))
                             reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(registration,)).fetchone()[0]
-                            log_action("IMPORTACAO","leitor",reader_id,"Leitor importado de "+item.get("_source","documento"))
+                            activity_events.append(("leitor",reader_id,"Leitor importado de "+item.get("_source","documento")))
                         imported+=1
                     except sqlite3.IntegrityError as exc:
                         skipped+=1
                         issues.append(item.get("_source","Documento")+": registro ignorado ("+str(exc)+").")
+            for entity_type,entity_id,description in activity_events:
+                log_action("IMPORTACAO",entity_type,entity_id,description)
             self.refresh()
             self.doc_import_summary.configure(text="Importação concluída. Importados: %d · Ignorados por duplicidade ou dados inválidos: %d%s"%(imported,skipped,("\n"+ "\n".join(issues[:8])) if issues else ""),text_color=self.GREEN)
             messagebox.showinfo("Importação concluída","Importados: %d\nIgnorados: %d\n\nOs dados já estão no banco local do Libris."%(imported,skipped))
