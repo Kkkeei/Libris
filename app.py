@@ -131,8 +131,8 @@ def make_web():
     web=Flask("libris_mobile")
     page="""<!doctype html><html lang=pt-br><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Libris Mobile</title>
     <style>body{font:16px system-ui;background:#f2f5fa;color:#172033;margin:0}.wrap{max-width:540px;margin:auto;padding:20px}.card{background:white;border-radius:16px;padding:20px;margin:14px 0}input,button{font:inherit;box-sizing:border-box;width:100%;padding:12px;margin:6px 0;border-radius:9px;border:1px solid #ccd3df}button{background:#2449a5;color:white;border:0;font-weight:bold}.ok{color:green}.err{color:#b42318}</style>
-    <div class=wrap><h1>📚 Libris</h1><p>Empréstimo pelo celular na mesma rede Wi-Fi.</p><div class=card><h3>Novo empréstimo</h3><form id=f><label>ISBN do livro</label><input id=isbn required><label>Matrícula do leitor</label><input id=reg required><label>Devolução prevista</label><input id=due type=date required><button>Registrar empréstimo</button></form><p id=msg></p></div><div class=card><h3>Pesquisar livro</h3><input id=q placeholder="Título, autor ou ISBN"><button onclick=searchBook()>Pesquisar</button><div id=results></div></div></div>
-    <script>document.getElementById('due').value=new Date(Date.now()+12096e5).toISOString().slice(0,10);document.getElementById('f').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/mobile-loan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({isbn:document.getElementById('isbn').value.trim(),registration:document.getElementById('reg').value.trim(),due:document.getElementById('due').value})});let j=await r.json();let m=document.getElementById('msg');m.className=j.ok?'ok':'err';m.textContent=j.message};async function searchBook(){let r=await fetch('/api/book?q='+encodeURIComponent(document.getElementById('q').value));let j=await r.json();document.getElementById('results').innerHTML=j.books.length?j.books.map(b=>'<p><b>'+b.title+'</b><br>'+b.author+' · ISBN '+(b.isbn||'—')+'</p>').join(''):'Nenhum livro encontrado.'}</script></html>"""
+    <div class=wrap><h1>📚 Libris</h1><p>Empréstimo pelo celular na mesma rede Wi-Fi.</p><div class=card><h3>Novo empréstimo</h3><form id=f><label>ISBN ou tombo do exemplar</label><input id=isbn required><label>Matrícula do leitor</label><input id=reg required><label>Devolução prevista</label><input id=due type=date required><button>Registrar empréstimo</button></form><p id=msg></p></div><div class=card><h3>Pesquisar livro</h3><input id=q placeholder="Título, autor ou ISBN"><button onclick=searchBook()>Pesquisar</button><div id=results></div></div></div>
+    <script>document.getElementById('due').value=new Date(Date.now()+12096e5).toISOString().slice(0,10);document.getElementById('f').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/mobile-loan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({isbn:document.getElementById('isbn').value.trim(),registration:document.getElementById('reg').value.trim(),due:document.getElementById('due').value})});let j=await r.json();let m=document.getElementById('msg');m.className=j.ok?'ok':'err';m.textContent=j.message};async function searchBook(){let r=await fetch('/api/book?q='+encodeURIComponent(document.getElementById('q').value));let j=await r.json();document.getElementById('results').innerHTML=j.books.length?j.books.map(b=>'<p><b>'+b.title+'</b><br>'+b.author+' · '+(b.category||'Sem gênero')+' · Tombo '+(b.accession_code||'—')+' · Coluna '+(b.column_code||'—')+' / Fileira '+(b.shelf_row||'—')+' · '+(b.condition_status||'Bom')+'</p>').join(''):'Nenhum livro encontrado.'}</script></html>"""
     @web.get("/mobile")
     def mobile(): return render_template_string(page)
     @web.get("/api/book")
@@ -235,7 +235,7 @@ class Libris(ctk.CTk):
         self.loan_ui(self.pages["Empréstimos"])
         self.pages["Reservas"]=ctk.CTkFrame(self.content,fg_color="transparent")
         self.reservation_ui(self.pages["Reservas"])
-        self.pages["Leitura & ranking"]=ctk.CTkFrame(self.content,fg_color="transparent")
+        self.pages["Leitura & ranking"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
         self.rank_ui(self.pages["Leitura & ranking"])
         self.pages["Relatórios"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
         self.reports_ui(self.pages["Relatórios"])
@@ -322,7 +322,8 @@ class Libris(ctk.CTk):
             cell.pack(side="left",fill="x",expand=True,padx=(0,10))
             ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",10,"bold")).pack(anchor="w",pady=(0,5))
             ctk.CTkEntry(cell,textvariable=var,height=39,corner_radius=9,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
-        ctk.CTkButton(inner,text=button,height=39,corner_radius=9,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",11,"bold"),command=cmd,width=150).pack(side="left",pady=(22,0))
+        self.last_form_button=ctk.CTkButton(inner,text=button,height=39,corner_radius=9,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",11,"bold"),command=cmd,width=150)
+        self.last_form_button.pack(side="left",pady=(22,0))
         return card
 
     def book_ui(self,parent):
@@ -340,11 +341,14 @@ class Libris(ctk.CTk):
             cell=ctk.CTkFrame(row2,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,8))
             ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",9,"bold")).pack(anchor="w",pady=(0,4))
             ctk.CTkEntry(cell,textvariable=var,placeholder_text=placeholder,height=36,corner_radius=8,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
-        ctk.CTkButton(row2,text="＋  Cadastrar exemplar",height=36,corner_radius=8,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",10,"bold"),command=self.add_book,width=160).pack(side="left",pady=(20,0))
+        self.editing_book_id=None
+        self.book_submit_btn=ctk.CTkButton(row2,text="＋  Cadastrar exemplar",height=36,corner_radius=8,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",10,"bold"),command=self.add_book,width=160)
+        self.book_submit_btn.pack(side="left",pady=(20,0))
         self.btable=self.table(parent,("ID","Tombo","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=9)
         self.btable.pack(fill="both",expand=True)
         actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(8,0))
-        ctk.CTkLabel(actions,text="Selecione um exemplar para atualizar sua condição:",text_color=self.MUTED,font=("Arial",10)).pack(side="left")
+        ctk.CTkLabel(actions,text="Selecione um exemplar para editar ou atualizar a condição:",text_color=self.MUTED,font=("Arial",10)).pack(side="left")
+        ctk.CTkButton(actions,text="Editar cadastro",width=110,height=32,command=self.load_book_for_edit).pack(side="right",padx=4)
         ctk.CTkButton(actions,text="Em manutenção",width=120,height=32,command=lambda:self.set_book_condition("Em manutenção"),fg_color="#FFF0D9",hover_color="#FBE1B5",text_color="#8A5B13").pack(side="right",padx=4)
         ctk.CTkButton(actions,text="Extraviado",width=100,height=32,command=lambda:self.set_book_condition("Extraviado"),fg_color="#FCE8EA",hover_color="#F7D1D5",text_color="#A52C3D").pack(side="right",padx=4)
         ctk.CTkButton(actions,text="Marcar como bom",width=120,height=32,command=lambda:self.set_book_condition("Bom"),fg_color="#E2F5EC",hover_color="#C8EBDD",text_color="#117452").pack(side="right",padx=4)
@@ -352,9 +356,12 @@ class Libris(ctk.CTk):
     def reader_ui(self,parent):
         self.section_title(parent,"Leitores e turmas","Organize os cadastros por turma e acompanhe uma meta anual de leitura.")
         self.rv=[tk.StringVar() for _ in range(5)]
+        self.editing_reader_id=None
         self.form_card(parent,[("NOME COMPLETO",self.rv[0]),("MATRÍCULA",self.rv[1]),("TURMA / ANO",self.rv[2]),("TELEFONE",self.rv[3]),("META ANUAL (livros)",self.rv[4])],"＋  Cadastrar leitor",self.add_reader)
-        self.rtable=self.table(parent,("ID","Nome","Matrícula","Turma","Telefone","Meta anual"),height=13)
+        self.reader_submit_btn=self.last_form_button
+        self.rtable=self.table(parent,("ID","Nome","Matrícula","Turma","Telefone","Meta anual"),height=12)
         self.rtable.pack(fill="both",expand=True)
+        ctk.CTkButton(parent,text="Editar leitor selecionado",command=self.load_reader_for_edit,height=34,fg_color="#E8EEFF",hover_color="#D9E2FF",text_color="#324CC1").pack(anchor="e",pady=(8,0))
 
     def loan_ui(self,parent):
         self.section_title(parent,"Circulação de exemplares","Digite ou use um leitor de código de barras para informar o tombo ou ISBN.")
