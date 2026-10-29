@@ -381,7 +381,7 @@ class Libris(ctk.CTk):
         search_entry.pack(side="left",fill="x",expand=True,padx=(0,8))
         search_entry.bind("<KeyRelease>",lambda event:self.refresh())
         ctk.CTkButton(searchbar,text="Limpar busca",height=36,width=105,command=lambda:(self.book_search_var.set(""),self.refresh())).pack(side="right")
-        self.btable=self.table(parent,("ID","Tombo","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=9)
+        self.btable=self.table(parent,("ID","Tombo","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação","Última conferência"),height=9)
         self.btable.pack(fill="both",expand=True)
         actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(8,0))
         ctk.CTkLabel(actions,text="Selecione um exemplar para editar ou atualizar a condição:",text_color=self.MUTED,font=("Arial",10)).pack(side="left")
@@ -755,7 +755,7 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(card,text="Exportar dados em CSV",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
         ctk.CTkLabel(card,text="Arquivos compatíveis com Excel e LibreOffice.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
         row=ctk.CTkFrame(card,fg_color="transparent"); row.pack(fill="x",padx=16,pady=(0,16))
-        for label,kind in [("Acervo completo","books"),("Leitores e turmas","readers"),("Empréstimos e atrasos","loans"),("Fila de reservas","reservations"),("Histórico de ações","activity")]:
+        for label,kind in [("Acervo completo","books"),("Leitores e turmas","readers"),("Empréstimos e atrasos","loans"),("Fila de reservas","reservations"),("Histórico de ações","activity"),("Inventário físico","inventory")]:
             ctk.CTkButton(row,text=label,command=lambda k=kind:self.export_report(k),height=38,corner_radius=9).pack(side="left",fill="x",expand=True,padx=4)
         imp=self.panel(parent); imp.pack(fill="x",pady=(0,14))
         ctk.CTkLabel(imp,text="Importar dados existentes",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
@@ -767,6 +767,21 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(backup,text="Backup do banco de dados",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
         ctk.CTkLabel(backup,text="Inclui cadastros, histórico de empréstimos e reservas.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
         ctk.CTkButton(backup,text="⤓  Criar backup agora",command=self.backup_database,height=40,width=210).pack(anchor="w",padx=18,pady=(0,18))
+        inventory=self.panel(parent); inventory.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(inventory,text="▦  Inventário físico por tombo",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(inventory,text="Passe pela estante e leia cada código de barras com um leitor USB. Cada leitura registra data/hora e condição do exemplar.",text_color=self.MUTED,font=("Arial",11),wraplength=900,justify="left").pack(anchor="w",padx=20,pady=(0,10))
+        scanrow=ctk.CTkFrame(inventory,fg_color="transparent"); scanrow.pack(fill="x",padx=16,pady=(0,6))
+        self.inventory_scan_var=tk.StringVar()
+        self.inventory_scan_entry=ctk.CTkEntry(scanrow,textvariable=self.inventory_scan_var,placeholder_text="Escaneie ou digite o TOMBO (ex.: LIB-000123)",height=38)
+        self.inventory_scan_entry.pack(side="left",fill="x",expand=True,padx=(0,8))
+        self.inventory_scan_entry.bind("<Return>",lambda event:self.check_inventory_code())
+        ctk.CTkButton(scanrow,text="Conferir exemplar",command=self.check_inventory_code,height=38,width=160).pack(side="right")
+        self.inventory_count=ctk.CTkLabel(inventory,text="Exemplares conferidos hoje: 0",text_color=self.GREEN,font=("Arial",11,"bold"))
+        self.inventory_count.pack(anchor="w",padx=20,pady=(0,6))
+        self.inventory_status=ctk.CTkLabel(inventory,text="A conferência física não altera automaticamente a condição do livro.",text_color=self.MUTED,font=("Arial",10))
+        self.inventory_status.pack(anchor="w",padx=20,pady=(0,8))
+        self.inventory_table=self.table(inventory,("Tombo","Título","Conferido em","Condição"),height=5)
+        self.inventory_table.pack(fill="both",expand=True,padx=12,pady=(0,12))
         self.report_status=ctk.CTkLabel(parent,text="Os relatórios são gerados neste computador.",text_color=self.MUTED,font=("Arial",11))
         self.report_status.pack(anchor="w",pady=8)
         policy=self.panel(parent); policy.pack(fill="x",pady=(10,18))
@@ -779,6 +794,29 @@ class Libris(ctk.CTk):
             ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",9,"bold")).pack(anchor="w",pady=(0,5))
             ctk.CTkEntry(cell,textvariable=self.policy_vars[key],height=36).pack(fill="x")
         ctk.CTkButton(policy,text="Salvar política",command=self.save_policies,height=38,width=170).pack(anchor="w",padx=20,pady=(0,16))
+
+    def check_inventory_code(self):
+        code=self.inventory_scan_var.get().strip().upper()
+        if not code:
+            return
+        with connect() as c:
+            book=c.execute("SELECT id,title,accession_code,condition_status FROM books WHERE accession_code=?",(code,)).fetchone()
+            if not book:
+                self.inventory_status.configure(text="Tombo não localizado: "+code, text_color=self.RED)
+                self.inventory_scan_var.set("")
+                self.inventory_scan_entry.focus_set()
+                return
+            stamp=datetime.now().isoformat(timespec="seconds")
+            c.execute("UPDATE books SET last_inventory_at=? WHERE id=?",(stamp,book["id"]))
+            c.execute("INSERT INTO inventory_scans(book_id,scanned_at,condition_status) VALUES(?,?,?)",
+                      (book["id"],stamp,book["condition_status"] or "Bom"))
+        log_action("CONFERENCIA_INVENTARIO","livro",book["id"],"Tombo "+code+" conferido fisicamente")
+        self.inventory_scan_var.set("")
+        self.inventory_status.configure(text="Conferido: "+book["title"]+" · "+code, text_color=self.GREEN)
+        self.refresh()
+        self.inventory_scan_entry.focus_set()
+        if book["condition_status"]=="Extraviado":
+            messagebox.showwarning("Condição do exemplar","O tombo foi encontrado fisicamente, mas ainda está marcado como Extraviado. Atualize a condição no catálogo após inspeção.")
 
     def save_policies(self):
         try:
@@ -804,6 +842,7 @@ class Libris(ctk.CTk):
             "loans":("emprestimos_atrasos.csv","SELECT l.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,r.class_name AS Turma,l.loan_date AS Emprestimo,l.due_date AS Devolucao_Prevista,l.returned_at AS Devolvido,l.renewals AS Renovacoes,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END AS Status FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date"),
             "reservations":("reservas.csv","SELECT q.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,q.request_date AS Solicitada,q.status AS Status FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id ORDER BY q.request_date,q.id"),
             "activity":("historico_acoes.csv","SELECT action AS Acao,entity_type AS Tipo,entity_id AS Registro,description AS Descricao,created_at AS Data_Hora FROM activity_log ORDER BY id DESC"),
+            "inventory":("inventario_fisico.csv","SELECT b.accession_code AS Tombo,b.title AS Titulo,b.author AS Autor,b.column_code AS Coluna,b.shelf_row AS Fileira,b.category AS Genero,b.condition_status AS Condicao,b.last_inventory_at AS Ultima_Conferencia FROM books b ORDER BY b.title,b.accession_code"),
         }
         default,query=reports[kind]
         path=filedialog.asksaveasfilename(title="Exportar relatório",defaultextension=".csv",initialfile=default,filetypes=[("CSV","*.csv")])
@@ -908,7 +947,7 @@ class Libris(ctk.CTk):
                 COALESCE(b.column_code,''),COALESCE(CAST(b.shelf_row AS TEXT),''),COALESCE(b.category,''),
                 CASE WHEN COALESCE(b.condition_status,'Bom')!='Bom' THEN b.condition_status
                      WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado'
-                     ELSE 'Disponível' END
+                     ELSE 'Disponível' END,COALESCE(substr(b.last_inventory_at,1,16),'Nunca conferido')
                 FROM books b
                 WHERE ?='' OR b.title LIKE ? OR b.author LIKE ? OR COALESCE(b.isbn,'') LIKE ?
                     OR COALESCE(b.accession_code,'') LIKE ? OR COALESCE(b.category,'') LIKE ?
@@ -929,6 +968,9 @@ class Libris(ctk.CTk):
             q=c.execute("""SELECT q.id,COALESCE(b.accession_code,''),b.title,r.name,r.registration,q.request_date,q.status
                 FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id
                 ORDER BY CASE q.status WHEN 'Disponível para retirada' THEN 0 WHEN 'Na fila' THEN 1 ELSE 2 END,q.request_date,q.id""").fetchall()
+            inventory=c.execute("""SELECT b.accession_code,b.title,i.scanned_at,i.condition_status FROM inventory_scans i
+                JOIN books b ON b.id=i.book_id ORDER BY i.id DESC LIMIT 20""").fetchall()
+            checked_today=c.execute("SELECT COUNT(DISTINCT book_id) FROM inventory_scans WHERE substr(scanned_at,1,10)=?",(date.today().isoformat(),)).fetchone()[0]
         self.fill(self.btable,b); self.fill(self.rtable,r); self.fill(self.ltable,l)
         self.m_books.configure(text=str(counts[0])); self.m_readers.configure(text=str(counts[1]))
         self.m_loans.configure(text=str(counts[2])); self.m_late.configure(text=str(counts[3]))
@@ -937,6 +979,9 @@ class Libris(ctk.CTk):
         self.fill(self.recent_table,[(x[1],x[2],x[4],x[6]) for x in l[:8]])
         if hasattr(self,"qtable"):
             self.fill(self.qtable,q)
+        if hasattr(self,"inventory_table"):
+            self.fill(self.inventory_table,inventory)
+            self.inventory_count.configure(text="Exemplares conferidos hoje: "+str(checked_today))
 
 if __name__=="__main__":
     init_db()
