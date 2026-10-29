@@ -1,6 +1,7 @@
 """Import parsers smoke test: CSV, XLSX, DOCX, PDF and JSON."""
 import csv
 import tempfile
+import sys
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -9,6 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from importador import parse_document
 
 root = Path(tempfile.mkdtemp(prefix="libris-import-test-"))
