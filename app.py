@@ -376,7 +376,7 @@ class Libris(ctk.CTk):
 
     def rank_ui(self,parent):
         self.section_title(parent,"Leitura e ranking","Use os dados da biblioteca para reconhecer a participação na leitura — sem expor histórico individual no painel.")
-        grid=ctk.CTkFrame(parent,fg_color="transparent"); grid.pack(fill="both",expand=True)
+        grid=ctk.CTkFrame(parent,fg_color="transparent"); grid.pack(fill="x",pady=(0,14))
         left=self.panel(grid); left.pack(side="left",fill="both",expand=True,padx=(0,10))
         right=self.panel(grid); right.pack(side="left",fill="both",expand=True,padx=(10,0))
         ctk.CTkLabel(left,text="🏆  Progresso anual dos leitores",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=18,pady=(18,3))
@@ -385,6 +385,50 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(right,text="Total de empréstimos registrados",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=18,pady=(0,12))
         self.rr=self.table(left,("Posição","Leitor","Progresso (meta)"),height=14); self.rr.pack(fill="both",expand=True,padx=12,pady=(0,14))
         self.rb=self.table(right,("Posição","Livro","Empréstimos"),height=14); self.rb.pack(fill="both",expand=True,padx=12,pady=(0,14))
+        suggest=self.panel(parent); suggest.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(suggest,text="✨  Sugestões inteligentes de leitura",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=18,pady=(16,3))
+        ctk.CTkLabel(suggest,text="Informe a matrícula: o Libris usa gêneros já lidos, popularidade e disponibilidade para sugerir exemplares ainda não emprestados àquele leitor.",text_color=self.MUTED,font=("Arial",11),wraplength=850,justify="left").pack(anchor="w",padx=18,pady=(0,8))
+        sr=ctk.CTkFrame(suggest,fg_color="transparent"); sr.pack(fill="x",padx=14,pady=(0,8))
+        self.suggest_var=tk.StringVar()
+        ctk.CTkEntry(sr,textvariable=self.suggest_var,placeholder_text="Matrícula do leitor",height=36,width=230).pack(side="left",padx=(0,8))
+        ctk.CTkButton(sr,text="Gerar recomendações",height=36,command=self.suggest_books).pack(side="left")
+        self.suggestion_table=self.table(suggest,("Gênero","Livro recomendado","Autor","Localização"),height=5)
+        self.suggestion_table.pack(fill="both",expand=True,padx=12,pady=(0,12))
+
+    def suggest_books(self):
+        registration=self.suggest_var.get().strip()
+        if not registration:
+            messagebox.showwarning("Sugestões","Informe a matrícula do leitor.")
+            return
+        with connect() as c:
+            reader=c.execute("SELECT id,name FROM readers WHERE registration=?",(registration,)).fetchone()
+            if not reader:
+                messagebox.showerror("Sugestões","Matrícula não encontrada.")
+                return
+            genre_row=c.execute("""SELECT b.category,COUNT(*) n FROM loans l JOIN books b ON b.id=l.book_id
+                WHERE l.reader_id=? AND l.returned_at IS NOT NULL AND trim(COALESCE(b.category,''))!=''
+                GROUP BY lower(b.category) ORDER BY n DESC,b.category LIMIT 1""",(reader["id"],)).fetchone()
+            if not genre_row:
+                genre_row=c.execute("""SELECT b.category,COUNT(*) n FROM loans l JOIN books b ON b.id=l.book_id
+                    WHERE trim(COALESCE(b.category,''))!='' GROUP BY lower(b.category) ORDER BY n DESC,b.category LIMIT 1""").fetchone()
+            if not genre_row:
+                genre_row=c.execute("SELECT category,1 n FROM books WHERE trim(COALESCE(category,''))!='' GROUP BY lower(category) ORDER BY category LIMIT 1").fetchone()
+            if not genre_row:
+                messagebox.showinfo("Sugestões","Cadastre gêneros nos livros para habilitar as recomendações.")
+                self.fill(self.suggestion_table,[])
+                return
+            genre=genre_row["category"]
+            rows=c.execute("""SELECT b.category,b.title,b.author,
+                COALESCE(NULLIF(b.column_code,''),'—') || ' / ' || COALESCE(CAST(b.shelf_row AS TEXT),'—')
+                FROM books b WHERE lower(COALESCE(b.category,''))=lower(?)
+                AND COALESCE(b.condition_status,'Bom')='Bom'
+                AND NOT EXISTS(SELECT 1 FROM loans a WHERE a.book_id=b.id AND a.returned_at IS NULL)
+                AND NOT EXISTS(SELECT 1 FROM loans old WHERE old.reader_id=? AND old.book_id=b.id)
+                ORDER BY (SELECT COUNT(*) FROM loans popular WHERE popular.book_id=b.id) DESC,b.title LIMIT 10""",
+                (genre,reader["id"])).fetchall()
+        self.fill(self.suggestion_table,rows)
+        if not rows:
+            messagebox.showinfo("Sugestões","Não há exemplares disponíveis e ainda não lidos no gênero "+str(genre)+" para este leitor.")
 
     def open_mobile_info(self):
         url="http://"+ip_address()+":"+str(PORT)+"/mobile"
@@ -416,17 +460,42 @@ class Libris(ctk.CTk):
         accession=vals[3].upper() if vals[3] else ""
         try:
             with connect() as c:
-                if not accession:
-                    accession="LIB-%06d" % c.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-                c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
-                    VALUES(?,?,?,?,?,?,?,'Bom')""",(vals[0],vals[1],vals[2] or None,vals[6],column,shelf_row,accession))
-                book_id=c.execute("SELECT id FROM books WHERE accession_code=?",(accession,)).fetchone()[0]
-            log_action("CADASTRO","livro",book_id,"Exemplar cadastrado: "+vals[0]+" · tombo "+accession)
+                if self.editing_book_id:
+                    if not accession:
+                        current=c.execute("SELECT accession_code FROM books WHERE id=?",(self.editing_book_id,)).fetchone()
+                        accession=current[0] if current else ""
+                    c.execute("""UPDATE books SET title=?,author=?,isbn=?,category=?,column_code=?,shelf_row=?,accession_code=?
+                        WHERE id=?""",(vals[0],vals[1],vals[2] or None,vals[6],column,shelf_row,accession,self.editing_book_id))
+                    book_id=self.editing_book_id
+                    action="EDICAO"
+                else:
+                    if not accession:
+                        accession="LIB-%06d" % c.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                    c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
+                        VALUES(?,?,?,?,?,?,?,'Bom')""",(vals[0],vals[1],vals[2] or None,vals[6],column,shelf_row,accession))
+                    book_id=c.execute("SELECT id FROM books WHERE accession_code=?",(accession,)).fetchone()[0]
+                    action="CADASTRO"
+            log_action(action,"livro",book_id,"Exemplar salvo: "+vals[0]+" · tombo "+accession)
         except sqlite3.IntegrityError:
             messagebox.showerror("Cadastro","Esse tombo já existe. Use outro código de exemplar.")
             return
         [v.set("") for v in self.bv]
+        self.editing_book_id=None
+        self.book_submit_btn.configure(text="＋  Cadastrar exemplar")
         self.refresh()
+
+    def load_book_for_edit(self):
+        sel=self.btable.selection()
+        if not sel:
+            messagebox.showwarning("Editar exemplar","Selecione um exemplar no catálogo.")
+            return
+        row=self.btable.item(sel[0])["values"]
+        self.editing_book_id=row[0]
+        values=[row[2],row[3],row[4],row[1],row[5],row[6],row[7]]
+        for var,value in zip(self.bv,values):
+            var.set("" if value is None else str(value))
+        self.book_submit_btn.configure(text="Salvar alterações")
+        self.bv[0] and messagebox.showinfo("Editar exemplar","Os dados foram carregados no formulário. Altere os campos e clique em Salvar alterações.")
 
     def add_reader(self):
         vals=[v.get().strip() for v in self.rv]
@@ -441,16 +510,37 @@ class Libris(ctk.CTk):
             return
         try:
             with connect() as c:
-                c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
-                          (vals[0],vals[1],vals[2],vals[3],goal))
-                reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(vals[1],)).fetchone()[0]
-            log_action("CADASTRO","leitor",reader_id,"Leitor cadastrado: "+vals[0]+" · turma "+(vals[2] or "não informada"))
+                if self.editing_reader_id:
+                    reader_id=self.editing_reader_id
+                    c.execute("UPDATE readers SET name=?,registration=?,class_name=?,phone=?,reading_goal=? WHERE id=?",
+                              (vals[0],vals[1],vals[2],vals[3],goal,reader_id))
+                    action="EDICAO"
+                else:
+                    c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
+                              (vals[0],vals[1],vals[2],vals[3],goal))
+                    reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(vals[1],)).fetchone()[0]
+                    action="CADASTRO"
+            log_action(action,"leitor",reader_id,"Leitor salvo: "+vals[0]+" · turma "+(vals[2] or "não informada"))
         except sqlite3.IntegrityError:
             messagebox.showerror("Cadastro","Matrícula já cadastrada.")
             return
         [v.set("") for v in self.rv]
         self.rv[4].set("12")
+        self.editing_reader_id=None
+        self.reader_submit_btn.configure(text="＋  Cadastrar leitor")
         self.refresh()
+
+    def load_reader_for_edit(self):
+        sel=self.rtable.selection()
+        if not sel:
+            messagebox.showwarning("Editar leitor","Selecione um leitor na tabela.")
+            return
+        row=self.rtable.item(sel[0])["values"]
+        self.editing_reader_id=row[0]
+        for var,value in zip(self.rv,[row[1],row[2],row[3],row[4],row[5]]):
+            var.set("" if value is None else str(value))
+        self.reader_submit_btn.configure(text="Salvar alterações")
+        messagebox.showinfo("Editar leitor","Os dados foram carregados no formulário. Altere os campos e clique em Salvar alterações.")
 
     def add_loan(self):
         identifier,reg,due_s=[v.get().strip() for v in self.lv]
