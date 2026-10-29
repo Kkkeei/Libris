@@ -864,11 +864,15 @@ class Libris(ctk.CTk):
         self.section_title(parent,"Importação inteligente de documentos","Cadastre livros ou alunos a partir de listas que a escola já tem. Primeiro leia e confira a prévia; só depois grave os registros.")
         intro=self.panel(parent); intro.pack(fill="x",pady=(0,14))
         ctk.CTkLabel(intro,text="1. Escolha o tipo de cadastro",text_color=self.INK,font=("Arial",15,"bold")).pack(anchor="w",padx=18,pady=(16,4))
-        controls=ctk.CTkFrame(intro,fg_color="transparent"); controls.pack(fill="x",padx=14,pady=(4,12))
+        controls=ctk.CTkFrame(intro,fg_color="transparent"); controls.pack(fill="x",padx=14,pady=(4,8))
         self.doc_import_kind=tk.StringVar(value="Livros")
         ctk.CTkOptionMenu(controls,values=["Livros","Alunos / leitores"],variable=self.doc_import_kind,width=200,height=38).pack(side="left",padx=4)
         ctk.CTkButton(controls,text="Selecionar arquivos…",command=self.choose_document_files,height=38,width=180).pack(side="left",padx=4)
         ctk.CTkButton(controls,text="Ler e montar prévia",command=self.analyze_document_files,height=38,width=180,fg_color=self.BLUE,hover_color="#3453D5").pack(side="left",padx=4)
+        templates=ctk.CTkFrame(intro,fg_color="transparent"); templates.pack(fill="x",padx=14,pady=(0,10))
+        ctk.CTkLabel(templates,text="Precisa de um modelo?",text_color=self.MUTED,font=("Arial",11,"bold")).pack(side="left",padx=4)
+        ctk.CTkButton(templates,text="Baixar modelo de livros (.xlsx)",command=lambda:self.export_import_template("books"),height=32,width=215,fg_color="#E8EEFF",hover_color="#D9E2FF",text_color="#324CC1").pack(side="left",padx=4)
+        ctk.CTkButton(templates,text="Baixar modelo de alunos (.xlsx)",command=lambda:self.export_import_template("readers"),height=32,width=220,fg_color="#E8EEFF",hover_color="#D9E2FF",text_color="#324CC1").pack(side="left",padx=4)
         self.doc_import_files_label=ctk.CTkLabel(intro,text="Nenhum arquivo selecionado.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left")
         self.doc_import_files_label.pack(anchor="w",padx=18,pady=(0,14))
         formats=self.panel(parent); formats.pack(fill="x",pady=(0,14))
@@ -886,6 +890,39 @@ class Libris(ctk.CTk):
         ctk.CTkButton(actions,text="Limpar prévia",command=self.clear_document_import,height=42,width=135,fg_color="#E8ECF4",hover_color="#DCE2ED",text_color=self.INK).pack(side="right",padx=8)
         self._document_paths=[]
         self._document_records=[]
+
+    def export_import_template(self,kind):
+        templates={
+            "books":("modelo_importacao_livros.xlsx",["Título","Autor","ISBN","Tombo","Gênero","Coluna","Fileira","Condição"]),
+            "readers":("modelo_importacao_alunos.xlsx",["Nome","Matrícula","Turma","Telefone","Meta anual"]),
+        }
+        if kind not in templates:
+            messagebox.showerror("Modelo","Tipo de modelo inválido.")
+            return
+        default,headers=templates[kind]
+        path=filedialog.asksaveasfilename(title="Salvar modelo de importação",defaultextension=".xlsx",initialfile=default,filetypes=[("Planilha Excel","*.xlsx")])
+        if not path:
+            return
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+            workbook=Workbook()
+            sheet=workbook.active
+            sheet.title="Livros" if kind=="books" else "Alunos"
+            sheet.append(headers)
+            for index,header in enumerate(headers,start=1):
+                cell=sheet.cell(row=1,column=index)
+                cell.font=Font(bold=True,color="FFFFFF")
+                cell.fill=PatternFill(fill_type="solid",fgColor="1F3A68")
+                cell.alignment=Alignment(vertical="center")
+                sheet.column_dimensions[get_column_letter(index)].width=max(14,min(30,len(header)+8))
+            sheet.freeze_panes="A2"
+            sheet.auto_filter.ref=sheet.dimensions
+            workbook.save(path)
+            messagebox.showinfo("Modelo criado","Planilha modelo salva em:\n"+path+"\n\nPreencha os registros abaixo dos cabeçalhos e importe em Importar arquivos.")
+        except Exception as exc:
+            messagebox.showerror("Modelo","Não foi possível criar a planilha: "+str(exc))
 
     def choose_document_files(self):
         filetypes=[
