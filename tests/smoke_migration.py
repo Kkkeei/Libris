@@ -63,14 +63,27 @@ with app.connect() as connection:
     )
     available = app.find_available_copy(connection, "9780000000001")
     assert available is not None and available["accession_code"] == "LIB-SECOND"
-    assert connection.execute("SELECT COUNT(*) FROM reservations").fetchone()[0] == 0
+    # The physical-inventory schema is present after both fresh setup and legacy migration.
+    assert "last_inventory_at" in {row["name"] for row in connection.execute("PRAGMA table_info(books)")}
+    assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_scans'").fetchone()
+    connection.execute("INSERT INTO readers(id,name,registration,phone,class_name,reading_goal) VALUES(2,'Outro leitor','ALU-002','','5º ano',12)")
+    connection.execute("INSERT INTO reservations(book_id,reader_id,request_date,status) VALUES(2,1,'2026-10-28','Disponível para retirada')")
+    assert app.find_available_copy(connection, "9780000000001", reader_id=2) is None
+    held_for_reader = app.find_available_copy(connection, "9780000000001", reader_id=1)
+    assert held_for_reader is not None and held_for_reader["accession_code"] == "LIB-SECOND"
 
 # Exercise the mobile search/loan endpoints without opening a GUI or server port.
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 client = app.make_web().test_client()
 search_response = client.get("/api/book?q=9780000000001")
 assert search_response.status_code == 200
 assert any(row["accession_code"] == "LIB-SECOND" for row in search_response.get_json()["books"])
+blocked_response = client.post("/api/mobile-loan", json={
+    "isbn": "9780000000001",
+    "registration": "ALU-002",
+    "due": (date.today() + timedelta(days=7)).isoformat(),
+})
+assert blocked_response.status_code == 409, blocked_response.get_json()
 loan_response = client.post("/api/mobile-loan", json={
     "isbn": "9780000000001",
     "registration": "ALU-001",
@@ -83,5 +96,12 @@ with app.connect() as connection:
         "SELECT COUNT(*) FROM loans WHERE reader_id=1 AND returned_at IS NULL"
     ).fetchone()[0]
     assert active_count == 2
+    reservation = connection.execute("SELECT status FROM reservations WHERE book_id=2 AND reader_id=1").fetchone()
+    assert reservation["status"] == "Atendida"
+    stamp = datetime.now().isoformat(timespec="seconds")
+    connection.execute("UPDATE books SET last_inventory_at=? WHERE accession_code='LIB-SECOND'", (stamp,))
+    book_id = connection.execute("SELECT id FROM books WHERE accession_code='LIB-SECOND'").fetchone()[0]
+    connection.execute("INSERT INTO inventory_scans(book_id,scanned_at,condition_status) VALUES(?,?,?)", (book_id,stamp,"Bom"))
+    assert connection.execute("SELECT COUNT(*) FROM inventory_scans WHERE book_id=?", (book_id,)).fetchone()[0] == 1
 
-print("OK: migração preserva histórico; ISBN duplicado, busca mobile e empréstimo mobile foram validados.")
+print("OK: migração, ISBN duplicado, reservas, limite de circulação, inventário e APIs mobile passaram.")
