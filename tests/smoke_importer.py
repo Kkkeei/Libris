@@ -34,7 +34,7 @@ ws.append(["Ana Beatriz", "5º ano A", "81999990000", 10])
 wb.save(xlsx_path)
 readers, warnings = parse_document(xlsx_path, "readers")
 assert readers and readers[0]["name"] == "Ana Beatriz", (readers, warnings)
-assert readers[0]["class_name"] == "5º ano A" and readers[0]["reading_goal"] == "10"
+assert readers[0]["class_name"] == "5º ano A" and set(readers[0]) == {"name", "class_name"}
 
 # DOCX table for a book catalog.
 docx_path = root / "leitura.docx"
@@ -72,6 +72,6 @@ json_path = root / "students.json"
 json_path.write_text('[{"Nome":"Pedro Santos","Matrícula":"ALU-992","Turma":"7º ano"}]', encoding="utf-8")
 json_readers, warnings = parse_document(json_path, "readers")
 assert json_readers and json_readers[0]["name"] == "Pedro Santos"
-assert json_readers[0]["registration"] == "ALU-992"
+assert json_readers[0]["class_name"] == "7º ano" and set(json_readers[0]) == {"name", "class_name"}
 
 print("OK: importação de CSV, XLSX, DOCX, PDF pesquisável e JSON validada.")
