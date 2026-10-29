@@ -1,4 +1,4 @@
-import os, sys, sqlite3, socket, threading, webbrowser, csv, shutil
+import os, sys, sqlite3, socket, threading, webbrowser, csv, shutil, re, unicodedata
 from pathlib import Path
 from datetime import date, datetime, timedelta
 import tkinter as tk
@@ -367,6 +367,12 @@ class Libris(ctk.CTk):
         self.editing_book_id=None
         self.book_submit_btn=ctk.CTkButton(row2,text="＋  Cadastrar exemplar",height=36,corner_radius=8,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",10,"bold"),command=self.add_book,width=160)
         self.book_submit_btn.pack(side="left",pady=(20,0))
+        searchbar=ctk.CTkFrame(parent,fg_color="transparent"); searchbar.pack(fill="x",pady=(0,8))
+        self.book_search_var=tk.StringVar()
+        search_entry=ctk.CTkEntry(searchbar,textvariable=self.book_search_var,placeholder_text="Pesquisar por título, autor, ISBN, tombo, gênero ou localização…",height=36)
+        search_entry.pack(side="left",fill="x",expand=True,padx=(0,8))
+        search_entry.bind("<KeyRelease>",lambda event:self.refresh())
+        ctk.CTkButton(searchbar,text="Limpar busca",height=36,width=105,command=lambda:(self.book_search_var.set(""),self.refresh())).pack(side="right")
         self.btable=self.table(parent,("ID","Tombo","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=9)
         self.btable.pack(fill="both",expand=True)
         actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(8,0))
@@ -802,11 +808,18 @@ class Libris(ctk.CTk):
 
     def refresh(self):
         with connect() as c:
+            term=self.book_search_var.get().strip() if hasattr(self,"book_search_var") else ""
+            pattern="%"+term+"%"
             b=c.execute("""SELECT b.id,COALESCE(b.accession_code,''),b.title,b.author,COALESCE(b.isbn,''),
                 COALESCE(b.column_code,''),COALESCE(CAST(b.shelf_row AS TEXT),''),COALESCE(b.category,''),
                 CASE WHEN COALESCE(b.condition_status,'Bom')!='Bom' THEN b.condition_status
                      WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado'
-                     ELSE 'Disponível' END FROM books b ORDER BY b.title,b.accession_code""").fetchall()
+                     ELSE 'Disponível' END
+                FROM books b
+                WHERE ?='' OR b.title LIKE ? OR b.author LIKE ? OR COALESCE(b.isbn,'') LIKE ?
+                    OR COALESCE(b.accession_code,'') LIKE ? OR COALESCE(b.category,'') LIKE ?
+                    OR COALESCE(b.column_code,'') LIKE ? OR COALESCE(CAST(b.shelf_row AS TEXT),'') LIKE ?
+                ORDER BY b.title,b.accession_code""",(term,pattern,pattern,pattern,pattern,pattern,pattern,pattern)).fetchall()
             r=c.execute("SELECT id,name,registration,class_name,phone,reading_goal FROM readers ORDER BY class_name,name").fetchall()
             l=c.execute("""SELECT l.id,b.title,r.name,l.loan_date,l.due_date,COALESCE(l.renewals,0),
                 CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END
