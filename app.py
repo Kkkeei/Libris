@@ -357,13 +357,14 @@ class Libris(ctk.CTk):
         self.rtable.pack(fill="both",expand=True)
 
     def loan_ui(self,parent):
-        self.section_title(parent,"Empréstimos","Registre retiradas, acompanhe prazos e confirme devoluções.")
+        self.section_title(parent,"Circulação de exemplares","Digite ou use um leitor de código de barras para informar o tombo ou ISBN.")
         self.lv=[tk.StringVar(),tk.StringVar(),tk.StringVar(value=(date.today()+timedelta(days=14)).isoformat())]
-        self.form_card(parent,[("ISBN DO LIVRO",self.lv[0]),("MATRÍCULA DO LEITOR",self.lv[1]),("DEVOLUÇÃO (AAAA-MM-DD)",self.lv[2])],"＋  Registrar empréstimo",self.add_loan)
+        self.form_card(parent,[("ISBN OU TOMBO DO EXEMPLAR",self.lv[0]),("MATRÍCULA DO LEITOR",self.lv[1]),("DEVOLUÇÃO (AAAA-MM-DD)",self.lv[2])],"＋  Registrar empréstimo",self.add_loan)
         actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(0,10))
-        ctk.CTkLabel(actions,text="Histórico de empréstimos",text_color=self.INK,font=("Arial",15,"bold")).pack(side="left")
-        ctk.CTkButton(actions,text="✓  Marcar devolução",height=34,corner_radius=9,fg_color="#E3F5EE",hover_color="#C8EBDD",text_color="#117452",command=self.return_loan).pack(side="right")
-        self.ltable=self.table(parent,("ID","Livro","Leitor","Empréstimo","Devolução prevista","Status"),height=11)
+        ctk.CTkLabel(actions,text="Histórico e situação dos empréstimos",text_color=self.INK,font=("Arial",14,"bold")).pack(side="left")
+        ctk.CTkButton(actions,text="↻ Renovar +14 dias",height=33,corner_radius=9,fg_color="#E8EEFF",hover_color="#D9E2FF",text_color="#324CC1",command=self.renew_loan).pack(side="right",padx=(5,0))
+        ctk.CTkButton(actions,text="✓ Marcar devolução",height=33,corner_radius=9,fg_color="#E3F5EE",hover_color="#C8EBDD",text_color="#117452",command=self.return_loan).pack(side="right")
+        self.ltable=self.table(parent,("ID","Livro","Leitor","Empréstimo","Devolução prevista","Renovações","Status"),height=10)
         self.ltable.pack(fill="both",expand=True)
 
     def rank_ui(self,parent):
@@ -445,25 +446,193 @@ class Libris(ctk.CTk):
         self.refresh()
 
     def add_loan(self):
-        isbn,reg,due_s=[v.get().strip() for v in self.lv]
+        identifier,reg,due_s=[v.get().strip() for v in self.lv]
         try:
             due=date.fromisoformat(due_s)
             if due<date.today(): raise ValueError()
-        except ValueError: messagebox.showwarning("Data inválida","Informe a data no formato AAAA-MM-DD."); return
+        except ValueError:
+            messagebox.showwarning("Data inválida","Informe a data no formato AAAA-MM-DD.")
+            return
         with connect() as c:
-            b=c.execute("SELECT * FROM books WHERE isbn=?",(isbn,)).fetchone(); r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
-            if not b: messagebox.showerror("Empréstimo","ISBN não encontrado."); return
-            if not r: messagebox.showerror("Empréstimo","Matrícula não encontrada."); return
-            if c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(b["id"],)).fetchone(): messagebox.showerror("Empréstimo","Livro já emprestado."); return
-            c.execute("INSERT INTO loans(book_id,reader_id,loan_date,due_date) VALUES(?,?,?,?)",(b["id"],r["id"],date.today().isoformat(),due.isoformat()))
-        self.refresh(); messagebox.showinfo("Libris","Empréstimo registrado.")
+            b=find_available_copy(c,identifier)
+            r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
+            if not b:
+                exists=c.execute("SELECT 1 FROM books WHERE isbn=? OR accession_code=?",(identifier,identifier)).fetchone()
+                messagebox.showerror("Empréstimo","Nenhum exemplar disponível em boas condições." if exists else "ISBN ou tombo não encontrado.")
+                return
+            if not r:
+                messagebox.showerror("Empréstimo","Matrícula não encontrada.")
+                return
+            active=c.execute("SELECT COUNT(*) FROM loans WHERE reader_id=? AND returned_at IS NULL",(r["id"],)).fetchone()[0]
+            max_row=c.execute("SELECT value FROM settings WHERE key='max_active_loans'").fetchone()
+            maximum=int(max_row[0]) if max_row else 5
+            if active>=maximum:
+                messagebox.showwarning("Limite de empréstimos","Este leitor já tem %d empréstimos ativos." % maximum)
+                return
+            c.execute("INSERT INTO loans(book_id,reader_id,loan_date,due_date) VALUES(?,?,?,?)",
+                      (b["id"],r["id"],date.today().isoformat(),due.isoformat()))
+            c.execute("UPDATE reservations SET status='Atendida' WHERE book_id=? AND reader_id=? AND status='Disponível para retirada'",(b["id"],r["id"]))
+        log_action("EMPRESTIMO","livro",b["id"],"Tombo "+(b["accession_code"] or "")+" emprestado para "+r["name"])
+        self.refresh()
+        messagebox.showinfo("Libris","Empréstimo registrado para %s. Tombo: %s" % (r["name"],b["accession_code"] or "—"))
 
     def return_loan(self):
         sel=self.ltable.selection()
-        if not sel: messagebox.showwarning("Devolução","Selecione um empréstimo."); return
+        if not sel:
+            messagebox.showwarning("Devolução","Selecione um empréstimo.")
+            return
         lid=self.ltable.item(sel[0])["values"][0]
-        with connect() as c: c.execute("UPDATE loans SET returned_at=? WHERE id=? AND returned_at IS NULL",(date.today().isoformat(),lid))
+        with connect() as c:
+            loan=c.execute("SELECT book_id,reader_id,returned_at FROM loans WHERE id=?",(lid,)).fetchone()
+            if not loan or loan["returned_at"]:
+                messagebox.showinfo("Devolução","Este empréstimo já foi encerrado.")
+                return
+            c.execute("UPDATE loans SET returned_at=? WHERE id=?",(date.today().isoformat(),lid))
+            reservation=c.execute("SELECT id,reader_id FROM reservations WHERE book_id=? AND status='Na fila' ORDER BY request_date,id LIMIT 1",(loan["book_id"],)).fetchone()
+            reservation_message=""
+            if reservation:
+                c.execute("UPDATE reservations SET status='Disponível para retirada',notified_at=? WHERE id=?",(datetime.now().isoformat(timespec="seconds"),reservation["id"]))
+                reader=c.execute("SELECT name FROM readers WHERE id=?",(reservation["reader_id"],)).fetchone()
+                reservation_message=" Reserva #%s de %s está pronta para retirada." % (reservation["id"],reader["name"] if reader else "leitor")
+            title=c.execute("SELECT title FROM books WHERE id=?",(loan["book_id"],)).fetchone()
+        log_action("DEVOLUCAO","emprestimo",lid,"Devolução registrada do livro "+(title["title"] if title else ""))
         self.refresh()
+        messagebox.showinfo("Devolução","Devolução registrada com sucesso."+reservation_message)
+
+    def renew_loan(self):
+        sel=self.ltable.selection()
+        if not sel:
+            messagebox.showwarning("Renovação","Selecione um empréstimo ativo.")
+            return
+        lid=self.ltable.item(sel[0])["values"][0]
+        with connect() as c:
+            loan=c.execute("SELECT book_id,due_date,returned_at,renewals FROM loans WHERE id=?",(lid,)).fetchone()
+            if not loan or loan["returned_at"]:
+                messagebox.showwarning("Renovação","Só é possível renovar empréstimos ativos.")
+                return
+            row=c.execute("SELECT value FROM settings WHERE key='max_renewals'").fetchone()
+            maximum=int(row[0]) if row else 2
+            if loan["renewals"]>=maximum:
+                messagebox.showwarning("Renovação","Este empréstimo atingiu o limite de %d renovação(ões)." % maximum)
+                return
+            waiting=c.execute("SELECT 1 FROM reservations WHERE book_id=? AND status='Na fila' LIMIT 1",(loan["book_id"],)).fetchone()
+            if waiting:
+                messagebox.showwarning("Renovação","Há uma reserva aguardando este exemplar; ele deve ser devolvido para atender a fila.")
+                return
+            new_due=max(date.fromisoformat(loan["due_date"]),date.today())+timedelta(days=14)
+            c.execute("UPDATE loans SET due_date=?,renewals=renewals+1 WHERE id=?",(new_due.isoformat(),lid))
+        log_action("RENOVACAO","emprestimo",lid,"Empréstimo renovado até "+new_due.isoformat())
+        self.refresh()
+        messagebox.showinfo("Renovação","Nova data de devolução: "+new_due.strftime("%d/%m/%Y"))
+
+    def set_book_condition(self,status):
+        sel=self.btable.selection()
+        if not sel:
+            messagebox.showwarning("Inventário","Selecione um exemplar no catálogo.")
+            return
+        book_id=self.btable.item(sel[0])["values"][0]
+        with connect() as c:
+            active=c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(book_id,)).fetchone()
+            if active and status=="Bom":
+                messagebox.showwarning("Inventário","Registre a devolução antes de marcar o exemplar como disponível.")
+                return
+            c.execute("UPDATE books SET condition_status=? WHERE id=?",(status,book_id))
+        log_action("INVENTARIO","livro",book_id,"Condição do exemplar alterada para "+status)
+        self.refresh()
+
+    def reservation_ui(self,parent):
+        self.section_title(parent,"Reservas","Na devolução, o primeiro leitor da fila passa a ter prioridade para retirar o exemplar.")
+        self.qv=[tk.StringVar(),tk.StringVar()]
+        self.form_card(parent,[("ISBN OU TOMBO",self.qv[0]),("MATRÍCULA DO LEITOR",self.qv[1])],"＋  Criar reserva",self.add_reservation)
+        actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(0,8))
+        ctk.CTkLabel(actions,text="Fila de reservas",text_color=self.INK,font=("Arial",14,"bold")).pack(side="left")
+        ctk.CTkButton(actions,text="Cancelar reserva selecionada",height=32,command=self.cancel_reservation,fg_color="#FCE8EA",hover_color="#F7D1D5",text_color="#A52C3D").pack(side="right")
+        self.qtable=self.table(parent,("ID","Tombo","Livro","Leitor","Matrícula","Solicitada em","Status"),height=13)
+        self.qtable.pack(fill="both",expand=True)
+
+    def add_reservation(self):
+        identifier,reg=[v.get().strip() for v in self.qv]
+        if not identifier or not reg:
+            messagebox.showwarning("Reserva","Informe o ISBN/tombo e a matrícula.")
+            return
+        with connect() as c:
+            book=c.execute("SELECT * FROM books WHERE accession_code=? OR isbn=? ORDER BY id LIMIT 1",(identifier,identifier)).fetchone()
+            reader=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
+            if not book:
+                messagebox.showerror("Reserva","ISBN ou tombo não encontrado.")
+                return
+            if not reader:
+                messagebox.showerror("Reserva","Matrícula não encontrada.")
+                return
+            duplicate=c.execute("SELECT 1 FROM reservations WHERE book_id=? AND reader_id=? AND status IN ('Na fila','Disponível para retirada')",(book["id"],reader["id"])).fetchone()
+            if duplicate:
+                messagebox.showinfo("Reserva","Este leitor já tem uma reserva ativa para esse exemplar.")
+                return
+            active=c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(book["id"],)).fetchone()
+            status="Disponível para retirada" if book["condition_status"]=="Bom" and not active else "Na fila"
+            c.execute("INSERT INTO reservations(book_id,reader_id,request_date,status,notified_at) VALUES(?,?,?,?,?)",
+                      (book["id"],reader["id"],date.today().isoformat(),status,datetime.now().isoformat(timespec="seconds") if status=="Disponível para retirada" else None))
+            rid=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        log_action("RESERVA","reserva",rid,"Reserva criada para "+reader["name"]+" · "+book["title"])
+        [v.set("") for v in self.qv]
+        self.refresh()
+        messagebox.showinfo("Reserva","Reserva registrada: "+status+".")
+
+    def cancel_reservation(self):
+        sel=self.qtable.selection()
+        if not sel:
+            messagebox.showwarning("Reserva","Selecione uma reserva.")
+            return
+        rid=self.qtable.item(sel[0])["values"][0]
+        with connect() as c:
+            c.execute("UPDATE reservations SET status='Cancelada' WHERE id=? AND status IN ('Na fila','Disponível para retirada')",(rid,))
+        log_action("RESERVA_CANCELADA","reserva",rid,"Reserva cancelada pela equipe da biblioteca")
+        self.refresh()
+
+    def reports_ui(self,parent):
+        self.section_title(parent,"Relatórios, exportações e segurança","Exporte dados para a coordenação e mantenha uma cópia de segurança do banco.")
+        card=self.panel(parent); card.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(card,text="Exportar dados em CSV",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(card,text="Arquivos compatíveis com Excel e LibreOffice.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
+        row=ctk.CTkFrame(card,fg_color="transparent"); row.pack(fill="x",padx=16,pady=(0,16))
+        for label,kind in [("Acervo completo","books"),("Leitores e turmas","readers"),("Empréstimos e atrasos","loans"),("Fila de reservas","reservations")]:
+            ctk.CTkButton(row,text=label,command=lambda k=kind:self.export_report(k),height=38,corner_radius=9).pack(side="left",fill="x",expand=True,padx=4)
+        backup=self.panel(parent); backup.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(backup,text="Backup do banco de dados",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(backup,text="Inclui cadastros, histórico de empréstimos e reservas.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
+        ctk.CTkButton(backup,text="⤓  Criar backup agora",command=self.backup_database,height=40,width=210).pack(anchor="w",padx=18,pady=(0,18))
+        self.report_status=ctk.CTkLabel(parent,text="Os relatórios são gerados neste computador.",text_color=self.MUTED,font=("Arial",11))
+        self.report_status.pack(anchor="w",pady=8)
+
+    def export_report(self,kind):
+        reports={
+            "books":("acervo.csv","SELECT accession_code AS Tombo,title AS Titulo,author AS Autor,isbn AS ISBN,column_code AS Coluna,shelf_row AS Fileira,category AS Genero,condition_status AS Condicao FROM books ORDER BY title,accession_code"),
+            "readers":("leitores_turmas.csv","SELECT name AS Nome,registration AS Matricula,class_name AS Turma,phone AS Telefone,reading_goal AS Meta_Anual FROM readers ORDER BY class_name,name"),
+            "loans":("emprestimos_atrasos.csv","SELECT l.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,r.class_name AS Turma,l.loan_date AS Emprestimo,l.due_date AS Devolucao_Prevista,l.returned_at AS Devolvido,l.renewals AS Renovacoes,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END AS Status FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date"),
+            "reservations":("reservas.csv","SELECT q.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,q.request_date AS Solicitada,q.status AS Status FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id ORDER BY q.request_date,q.id"),
+        }
+        default,query=reports[kind]
+        path=filedialog.asksaveasfilename(title="Exportar relatório",defaultextension=".csv",initialfile=default,filetypes=[("CSV","*.csv")])
+        if not path: return
+        with connect() as c:
+            cursor=c.execute(query,(date.today().isoformat(),)) if kind=="loans" else c.execute(query)
+            rows=cursor.fetchall(); headers=[d[0] for d in cursor.description]
+        with open(path,"w",newline="",encoding="utf-8-sig") as f:
+            writer=csv.writer(f,delimiter=";"); writer.writerow(headers)
+            writer.writerows([tuple(row) for row in rows])
+        self.report_status.configure(text="Relatório exportado: "+path,text_color=self.GREEN)
+
+    def backup_database(self):
+        default="libris-backup-"+date.today().isoformat()+".db"
+        path=filedialog.asksaveasfilename(title="Salvar backup do Libris",defaultextension=".db",initialfile=default,filetypes=[("Banco SQLite","*.db")])
+        if not path: return
+        try:
+            source=sqlite3.connect(DB); target=sqlite3.connect(path)
+            source.backup(target); target.close(); source.close()
+            self.report_status.configure(text="Backup criado com sucesso: "+path,text_color=self.GREEN)
+            messagebox.showinfo("Backup","Cópia de segurança salva com sucesso.")
+        except Exception as exc:
+            messagebox.showerror("Backup","Não foi possível criar o backup: "+str(exc))
 
     def fill(self,t,rows):
         t.delete(*t.get_children())
