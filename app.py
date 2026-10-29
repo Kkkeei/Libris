@@ -736,8 +736,14 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(card,text="Exportar dados em CSV",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
         ctk.CTkLabel(card,text="Arquivos compatíveis com Excel e LibreOffice.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
         row=ctk.CTkFrame(card,fg_color="transparent"); row.pack(fill="x",padx=16,pady=(0,16))
-        for label,kind in [("Acervo completo","books"),("Leitores e turmas","readers"),("Empréstimos e atrasos","loans"),("Fila de reservas","reservations")]:
+        for label,kind in [("Acervo completo","books"),("Leitores e turmas","readers"),("Empréstimos e atrasos","loans"),("Fila de reservas","reservations"),("Histórico de ações","activity")]:
             ctk.CTkButton(row,text=label,command=lambda k=kind:self.export_report(k),height=38,corner_radius=9).pack(side="left",fill="x",expand=True,padx=4)
+        imp=self.panel(parent); imp.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(imp,text="Importar dados existentes",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(imp,text="Importe CSV de acervo ou leitores. Registros com tombo ou matrícula já existente são ignorados.",text_color=self.MUTED,font=("Arial",11),wraplength=900,justify="left").pack(anchor="w",padx=20,pady=(0,12))
+        imp_row=ctk.CTkFrame(imp,fg_color="transparent"); imp_row.pack(fill="x",padx=16,pady=(0,16))
+        ctk.CTkButton(imp_row,text="＋ Importar acervo CSV",command=lambda:self.import_csv("books"),height=38,width=190).pack(side="left",padx=4)
+        ctk.CTkButton(imp_row,text="＋ Importar leitores CSV",command=lambda:self.import_csv("readers"),height=38,width=190).pack(side="left",padx=4)
         backup=self.panel(parent); backup.pack(fill="x",pady=(0,14))
         ctk.CTkLabel(backup,text="Backup do banco de dados",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
         ctk.CTkLabel(backup,text="Inclui cadastros, histórico de empréstimos e reservas.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
@@ -778,6 +784,7 @@ class Libris(ctk.CTk):
             "readers":("leitores_turmas.csv","SELECT name AS Nome,registration AS Matricula,class_name AS Turma,phone AS Telefone,reading_goal AS Meta_Anual FROM readers ORDER BY class_name,name"),
             "loans":("emprestimos_atrasos.csv","SELECT l.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,r.class_name AS Turma,l.loan_date AS Emprestimo,l.due_date AS Devolucao_Prevista,l.returned_at AS Devolvido,l.renewals AS Renovacoes,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END AS Status FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date"),
             "reservations":("reservas.csv","SELECT q.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,q.request_date AS Solicitada,q.status AS Status FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id ORDER BY q.request_date,q.id"),
+            "activity":("historico_acoes.csv","SELECT action AS Acao,entity_type AS Tipo,entity_id AS Registro,description AS Descricao,created_at AS Data_Hora FROM activity_log ORDER BY id DESC"),
         }
         default,query=reports[kind]
         path=filedialog.asksaveasfilename(title="Exportar relatório",defaultextension=".csv",initialfile=default,filetypes=[("CSV","*.csv")])
@@ -789,6 +796,74 @@ class Libris(ctk.CTk):
             writer=csv.writer(f,delimiter=";"); writer.writerow(headers)
             writer.writerows([tuple(row) for row in rows])
         self.report_status.configure(text="Relatório exportado: "+path,text_color=self.GREEN)
+
+    def import_csv(self,kind):
+        path=filedialog.askopenfilename(title="Importar dados CSV",filetypes=[("Arquivos CSV","*.csv"),("Todos os arquivos","*.*")])
+        if not path: return
+        imported=0; skipped=0; failures=0
+        def key(value):
+            return "".join(ch for ch in unicodedata.normalize("NFKD",str(value or "").strip().lower()) if ch.isalnum())
+        def get_value(row,*names):
+            normalized={key(k):v for k,v in row.items()}
+            for name in names:
+                value=normalized.get(key(name))
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+            return ""
+        try:
+            with open(path,"r",newline="",encoding="utf-8-sig") as f:
+                sample=f.read(4096); f.seek(0)
+                try: dialect=csv.Sniffer().sniff(sample,delimiters=";,\t,")
+                except csv.Error: dialect=csv.excel; dialect.delimiter=";"
+                reader=csv.DictReader(f,dialect=dialect)
+                with connect() as c:
+                    for row in reader:
+                        try:
+                            if kind=="books":
+                                title=get_value(row,"Título","Titulo","Title","Nome")
+                                if not title:
+                                    skipped+=1; continue
+                                isbn=get_value(row,"ISBN","ISBN/EAN") or None
+                                accession=get_value(row,"Tombo","Código","Codigo","Accession Code","Código de barras").upper()
+                                if accession and c.execute("SELECT 1 FROM books WHERE accession_code=?",(accession,)).fetchone():
+                                    skipped+=1; continue
+                                if not accession:
+                                    next_id=c.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                                    accession="LIB-%06d" % next_id
+                                    while c.execute("SELECT 1 FROM books WHERE accession_code=?",(accession,)).fetchone():
+                                        next_id+=1; accession="LIB-%06d" % next_id
+                                column=get_value(row,"Coluna","Column").upper()
+                                shelf_text=get_value(row,"Fileira","Prateleira","Shelf Row")
+                                try: shelf_row=int(shelf_text) if shelf_text else None
+                                except ValueError: shelf_row=None
+                                if shelf_row is not None and shelf_row<1: shelf_row=None
+                                genre=get_value(row,"Gênero","Genero","Categoria","Category")
+                                status=get_value(row,"Condição","Condicao","Status","Condition") or "Bom"
+                                if status not in ("Bom","Em manutenção","Extraviado"): status="Bom"
+                                c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
+                                    VALUES(?,?,?,?,?,?,?,?)""",(title,get_value(row,"Autor","Author"),isbn,genre,column,shelf_row,accession,status))
+                                imported+=1
+                            else:
+                                name=get_value(row,"Nome","Nome completo","Name")
+                                registration=get_value(row,"Matrícula","Matricula","Registration","ID do leitor")
+                                if not name or not registration or c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
+                                    skipped+=1; continue
+                                try: goal=int(get_value(row,"Meta anual","Meta","Reading Goal") or "12")
+                                except ValueError: goal=12
+                                goal=min(500,max(1,goal))
+                                c.execute("""INSERT INTO readers(name,registration,class_name,phone,reading_goal)
+                                    VALUES(?,?,?,?,?)""",(name,registration,get_value(row,"Turma","Ano","Class"),get_value(row,"Telefone","Phone"),goal))
+                                imported+=1
+                        except (sqlite3.IntegrityError,ValueError,TypeError):
+                            skipped+=1
+                            failures+=1
+            log_action("IMPORTACAO",kind,None,"Arquivo "+Path(path).name+": "+str(imported)+" importados, "+str(skipped)+" ignorados")
+            self.refresh()
+            messagebox.showinfo("Importação concluída","Importados: %d\nIgnorados: %d\nArquivo: %s" % (imported,skipped,Path(path).name))
+            if hasattr(self,"report_status"):
+                self.report_status.configure(text="Importação concluída: %d registros importados, %d ignorados." % (imported,skipped),text_color=self.GREEN)
+        except (OSError,csv.Error,sqlite3.Error) as exc:
+            messagebox.showerror("Importação","Não foi possível importar o arquivo: "+str(exc))
 
     def backup_database(self):
         default="libris-backup-"+date.today().isoformat()+".db"
