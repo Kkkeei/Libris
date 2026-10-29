@@ -326,9 +326,11 @@ class Libris(ctk.CTk):
         style.map("Libris.Treeview",background=[("selected","#E2E9FF")],foreground=[("selected","#172033")])
         t=ttk.Treeview(wrap,columns=cols,show="headings",height=height,style="Libris.Treeview")
         sy=ttk.Scrollbar(wrap,orient="vertical",command=t.yview)
-        t.configure(yscrollcommand=sy.set)
-        t.pack(side="left",fill="both",expand=True)
+        sx=ttk.Scrollbar(wrap,orient="horizontal",command=t.xview)
+        t.configure(yscrollcommand=sy.set,xscrollcommand=sx.set)
         sy.pack(side="right",fill="y")
+        sx.pack(side="bottom",fill="x")
+        t.pack(side="left",fill="both",expand=True)
         for col in cols:
             t.heading(col,text=col)
             t.column(col,width=125,minwidth=80,anchor="w")
@@ -606,7 +608,9 @@ class Libris(ctk.CTk):
                 messagebox.showinfo("Devolução","Este empréstimo já foi encerrado.")
                 return
             c.execute("UPDATE loans SET returned_at=? WHERE id=?",(date.today().isoformat(),lid))
-            reservation=c.execute("SELECT id,reader_id FROM reservations WHERE book_id=? AND status='Na fila' ORDER BY request_date,id LIMIT 1",(loan["book_id"],)).fetchone()
+            reservation=c.execute("""SELECT q.id,q.reader_id FROM reservations q JOIN books b ON b.id=q.book_id
+                WHERE q.book_id=? AND q.status='Na fila' AND b.condition_status='Bom'
+                ORDER BY q.request_date,q.id LIMIT 1""",(loan["book_id"],)).fetchone()
             reservation_message=""
             if reservation:
                 c.execute("UPDATE reservations SET status='Disponível para retirada',notified_at=? WHERE id=?",(datetime.now().isoformat(timespec="seconds"),reservation["id"]))
@@ -655,8 +659,21 @@ class Libris(ctk.CTk):
                 messagebox.showwarning("Inventário","Registre a devolução antes de marcar o exemplar como disponível.")
                 return
             c.execute("UPDATE books SET condition_status=? WHERE id=?",(status,book_id))
+            released=None
+            if status=="Bom":
+                released=c.execute("SELECT id,reader_id FROM reservations WHERE book_id=? AND status='Na fila' ORDER BY request_date,id LIMIT 1",(book_id,)).fetchone()
+                if released:
+                    c.execute("UPDATE reservations SET status='Disponível para retirada',notified_at=? WHERE id=?",
+                              (datetime.now().isoformat(timespec="seconds"),released["id"]))
+            if released:
+                r=c.execute("SELECT name FROM readers WHERE id=?",(released["reader_id"],)).fetchone()
+                released_name=r["name"] if r else "leitor"
+            else:
+                released_name=""
         log_action("INVENTARIO","livro",book_id,"Condição do exemplar alterada para "+status)
         self.refresh()
+        if released_name:
+            messagebox.showinfo("Reserva liberada","O exemplar está disponível para retirada por "+released_name+".")
 
     def reservation_ui(self,parent):
         self.section_title(parent,"Reservas","Na devolução, o primeiro leitor da fila passa a ter prioridade para retirar o exemplar.")
