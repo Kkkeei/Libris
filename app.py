@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import customtkinter as ctk
+from importador import parse_document, SUPPORTED_EXTENSIONS, FIELD_LABELS
 try:
     import qrcode
     from PIL import Image, ImageTk
@@ -229,7 +230,7 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(words,text="libris",text_color="#FFFFFF",font=("Arial",23,"bold")).pack(anchor="w")
         ctk.CTkLabel(words,text="BIBLIOTECA DIGITAL",text_color="#9CA8C0",font=("Arial",9,"bold")).pack(anchor="w")
         ctk.CTkLabel(self.sidebar,text="MENU PRINCIPAL",text_color="#7D8AA4",font=("Arial",10,"bold")).pack(anchor="w",padx=24,pady=(0,10))
-        navs=[("Visão geral","⌂"),("Livros","▤"),("Leitores","♙"),("Empréstimos","⇄"),("Reservas","◷"),("Leitura & ranking","✦"),("Relatórios","▦")]
+        navs=[("Visão geral","⌂"),("Livros","▤"),("Leitores","♙"),("Empréstimos","⇄"),("Reservas","◷"),("Importar arquivos","⇧"),("Leitura & ranking","✦"),("Relatórios","▦")]
         for label,ico in navs:
             btn=ctk.CTkButton(self.sidebar,text=f"  {ico}     {label}",anchor="w",height=45,corner_radius=11,
                 fg_color="transparent",hover_color="#26334D",text_color="#D8DFEC",font=("Arial",13),
@@ -268,6 +269,8 @@ class Libris(ctk.CTk):
         self.loan_ui(self.pages["Empréstimos"])
         self.pages["Reservas"]=ctk.CTkFrame(self.content,fg_color="transparent")
         self.reservation_ui(self.pages["Reservas"])
+        self.pages["Importar arquivos"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
+        self.import_documents_ui(self.pages["Importar arquivos"])
         self.pages["Leitura & ranking"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
         self.rank_ui(self.pages["Leitura & ranking"])
         self.pages["Relatórios"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
@@ -858,6 +861,198 @@ class Libris(ctk.CTk):
             writer=csv.writer(f,delimiter=";"); writer.writerow(headers)
             writer.writerows([tuple(row) for row in rows])
         self.report_status.configure(text="Relatório exportado: "+path,text_color=self.GREEN)
+
+    def import_documents_ui(self,parent):
+        self.section_title(parent,"Importação inteligente de documentos","Cadastre livros ou alunos a partir de listas que a escola já tem. Primeiro leia e confira a prévia; só depois grave os registros.")
+        intro=self.panel(parent); intro.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(intro,text="1. Escolha o tipo de cadastro",text_color=self.INK,font=("Arial",15,"bold")).pack(anchor="w",padx=18,pady=(16,4))
+        controls=ctk.CTkFrame(intro,fg_color="transparent"); controls.pack(fill="x",padx=14,pady=(4,12))
+        self.doc_import_kind=tk.StringVar(value="Livros")
+        ctk.CTkOptionMenu(controls,values=["Livros","Alunos / leitores"],variable=self.doc_import_kind,width=200,height=38).pack(side="left",padx=4)
+        ctk.CTkButton(controls,text="Selecionar arquivos…",command=self.choose_document_files,height=38,width=180).pack(side="left",padx=4)
+        ctk.CTkButton(controls,text="Ler e montar prévia",command=self.analyze_document_files,height=38,width=180,fg_color=self.BLUE,hover_color="#3453D5").pack(side="left",padx=4)
+        self.doc_import_files_label=ctk.CTkLabel(intro,text="Nenhum arquivo selecionado.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left")
+        self.doc_import_files_label.pack(anchor="w",padx=18,pady=(0,14))
+        formats=self.panel(parent); formats.pack(fill="x",pady=(0,14))
+        ctk.CTkLabel(formats,text="Formatos aceitos",text_color=self.INK,font=("Arial",14,"bold")).pack(anchor="w",padx=18,pady=(14,4))
+        ctk.CTkLabel(formats,text="PDF com texto/tabelas · Word DOCX · Word DOC (com LibreOffice instalado) · Excel XLSX/XLS/ODS · OpenDocument ODT · CSV · TSV · TXT · JSON",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left").pack(anchor="w",padx=18,pady=(0,8))
+        ctk.CTkLabel(formats,text="Dica: cabeçalhos como Título, Autor, ISBN, Tombo, Gênero, Nome, Matrícula e Turma ajudam o Libris a identificar os campos automaticamente. PDFs digitalizados como imagem precisam de OCR antes da importação.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left").pack(anchor="w",padx=18,pady=(0,14))
+        preview=self.panel(parent); preview.pack(fill="both",expand=True,pady=(0,12))
+        ctk.CTkLabel(preview,text="2. Confira os dados antes de importar",text_color=self.INK,font=("Arial",15,"bold")).pack(anchor="w",padx=18,pady=(16,4))
+        self.doc_import_summary=ctk.CTkLabel(preview,text="A prévia aparecerá aqui após a leitura dos arquivos.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left")
+        self.doc_import_summary.pack(anchor="w",padx=18,pady=(0,10))
+        self.doc_import_table=self.table(preview,("Arquivo","Resultado","Título / Nome","Autor","ISBN","Matrícula","Turma","Gênero","Coluna / Fileira","Tombo"),height=10)
+        self.doc_import_table.pack(fill="both",expand=True,padx=12,pady=(0,12))
+        actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(0,12))
+        ctk.CTkButton(actions,text="Importar registros válidos",command=self.commit_document_import,height=42,width=230,fg_color=self.GREEN,hover_color="#107B5A").pack(side="right")
+        ctk.CTkButton(actions,text="Limpar prévia",command=self.clear_document_import,height=42,width=135,fg_color="#E8ECF4",hover_color="#DCE2ED",text_color=self.INK).pack(side="right",padx=8)
+        self._document_paths=[]
+        self._document_records=[]
+
+    def choose_document_files(self):
+        filetypes=[
+            ("Todos os formatos aceitos","*.pdf *.docx *.doc *.csv *.tsv *.txt *.xlsx *.xls *.ods *.odt *.json"),
+            ("PDF","*.pdf"),("Word","*.docx *.doc"),("Excel e planilhas","*.xlsx *.xls *.ods"),
+            ("CSV e texto","*.csv *.tsv *.txt"),("JSON","*.json"),("Todos os arquivos","*.*")
+        ]
+        chosen=filedialog.askopenfilenames(title="Selecionar listas de livros ou alunos",filetypes=filetypes)
+        if chosen:
+            self._document_paths=list(chosen)
+            self.doc_import_files_label.configure(text="Arquivos selecionados (%d): %s" % (len(chosen), " · ".join(Path(p).name for p in chosen)),text_color=self.INK)
+
+    def _document_duplicate_status(self,record,kind,seen):
+        with connect() as c:
+            if kind=="books":
+                accession=(record.get("accession_code") or "").strip().upper()
+                if accession:
+                    token=("tombo",accession)
+                    if token in seen or c.execute("SELECT 1 FROM books WHERE accession_code=?",(accession,)).fetchone():
+                        return "Duplicado"
+                    seen.add(token)
+                return "Pronto" if accession else "Pronto · tombo automático"
+            registration=(record.get("registration") or "").strip()
+            if registration:
+                token=("matricula",registration.casefold())
+                if token in seen or c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
+                    return "Duplicado"
+                seen.add(token)
+                return "Pronto"
+            return "Pronto · matrícula automática"
+
+    def analyze_document_files(self):
+        if not self._document_paths:
+            messagebox.showwarning("Importação","Selecione um ou mais arquivos antes de montar a prévia.")
+            return
+        kind="books" if self.doc_import_kind.get()=="Livros" else "readers"
+        new_records=[]; warnings=[]; errors=[]
+        seen=set()
+        for path in self._document_paths:
+            try:
+                records,notes=parse_document(path,kind)
+                warnings.extend([Path(path).name+": "+note for note in notes])
+                for record in records:
+                    item=dict(record)
+                    item["_source"]=Path(path).name
+                    item["_kind"]=kind
+                    item["_status"]=self._document_duplicate_status(item,kind,seen)
+                    new_records.append(item)
+            except Exception as exc:
+                errors.append(Path(path).name+": "+str(exc))
+        self._document_records=new_records
+        self._refresh_document_preview()
+        ready=sum(1 for item in new_records if not item["_status"].startswith("Duplicado"))
+        duplicate=len(new_records)-ready
+        summary="Tipo: %s · reconhecidos: %d · prontos para importar: %d · duplicados: %d." % (
+            "Livros" if kind=="books" else "Alunos / leitores",len(new_records),ready,duplicate)
+        details=(warnings+errors)[:12]
+        if details:
+            summary+="\n\nObservações:\n"+"\n".join("• "+msg for msg in details)
+            if len(warnings)+len(errors)>12:
+                summary+="\n… e mais %d observação(ões)." % (len(warnings)+len(errors)-12)
+        self.doc_import_summary.configure(text=summary,text_color=self.RED if errors else self.MUTED)
+        if not new_records:
+            messagebox.showwarning("Importação","Nenhum registro foi reconhecido. Confira se o documento contém tabelas/texto legível e se os cabeçalhos identificam os campos.")
+
+    def _refresh_document_preview(self):
+        if not hasattr(self,"doc_import_table"):
+            return
+        kind="books" if self.doc_import_kind.get()=="Livros" else "readers"
+        rows=[]
+        for item in self._document_records[:500]:
+            if kind=="books":
+                rows.append((item.get("_source",""),item.get("_status",""),item.get("title",""),item.get("author",""),item.get("isbn",""),"", "",item.get("category",""),"%s / %s"%(item.get("column_code","") or "—",item.get("shelf_row","") or "—"),item.get("accession_code","") or "Automático"))
+            else:
+                rows.append((item.get("_source",""),item.get("_status",""),item.get("name",""),"","",item.get("registration","") or "Automática",item.get("class_name",""),"", "", ""))
+        self.fill(self.doc_import_table,rows)
+        if len(self._document_records)>500:
+            self.doc_import_summary.configure(text=self.doc_import_summary.cget("text")+"\nA tabela mostra as primeiras 500 linhas; a importação considera todos os registros válidos.")
+
+    def clear_document_import(self):
+        self._document_records=[]
+        self._document_paths=[]
+        self.doc_import_files_label.configure(text="Nenhum arquivo selecionado.",text_color=self.MUTED)
+        self.doc_import_summary.configure(text="A prévia foi limpa. Selecione arquivos para começar.",text_color=self.MUTED)
+        self.fill(self.doc_import_table,[])
+
+    def commit_document_import(self):
+        if not self._document_records:
+            messagebox.showwarning("Importação","Primeiro selecione arquivos e monte a prévia.")
+            return
+        kind="books" if self.doc_import_kind.get()=="Livros" else "readers"
+        if any(item.get("_kind")!=kind for item in self._document_records):
+            messagebox.showwarning("Tipo de cadastro alterado","Você mudou entre livros e alunos depois de ler os arquivos. Limpe a prévia e leia os arquivos novamente.")
+            return
+        ready=[item for item in self._document_records if not item.get("_status","").startswith("Duplicado")]
+        if not ready:
+            messagebox.showinfo("Importação","Não existem registros novos para importar.")
+            return
+        if not messagebox.askyesno("Confirmar importação","Importar %d registro(s) válidos? Os registros com tombo ou matrícula duplicados serão ignorados."%len(ready)):
+            return
+        imported=0; skipped=0; issues=[]
+        try:
+            with connect() as c:
+                for item in ready:
+                    try:
+                        if kind=="books":
+                            title=(item.get("title") or "").strip()
+                            if not title:
+                                skipped+=1; continue
+                            accession=(item.get("accession_code") or "").strip().upper()
+                            if accession and c.execute("SELECT 1 FROM books WHERE accession_code=?",(accession,)).fetchone():
+                                skipped+=1; continue
+                            if not accession:
+                                next_id=c.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                                accession="LIB-%06d"%next_id
+                                while c.execute("SELECT 1 FROM books WHERE accession_code=?",(accession,)).fetchone():
+                                    next_id+=1; accession="LIB-%06d"%next_id
+                            column=(item.get("column_code") or "").strip().upper()
+                            if column and (not column.isalpha() or len(column)>3):
+                                column=""
+                                issues.append("Coluna inválida em "+title+"; foi deixada vazia.")
+                            row_value=(item.get("shelf_row") or "").strip()
+                            try: shelf_row=int(float(row_value)) if row_value else None
+                            except (ValueError,TypeError): shelf_row=None
+                            if shelf_row is not None and shelf_row<1: shelf_row=None
+                            condition=(item.get("condition_status") or "Bom").strip()
+                            normalized_condition=unicodedata.normalize("NFKD",condition.lower())
+                            normalized_condition="".join(ch for ch in normalized_condition if not unicodedata.combining(ch))
+                            if normalized_condition in ("extraviado","perdido","perdida"): condition="Extraviado"
+                            elif normalized_condition in ("em manutencao","manutencao","reparo"): condition="Em manutenção"
+                            else: condition="Bom"
+                            c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
+                                VALUES(?,?,?,?,?,?,?,?)""",(title,(item.get("author") or "").strip(),(item.get("isbn") or "").strip() or None,(item.get("category") or "").strip(),column,shelf_row,accession,condition))
+                            book_id=c.execute("SELECT id FROM books WHERE accession_code=?",(accession,)).fetchone()[0]
+                            log_action("IMPORTACAO","livro",book_id,"Exemplar importado de "+item.get("_source","documento"))
+                        else:
+                            name=(item.get("name") or "").strip()
+                            if not name:
+                                skipped+=1; continue
+                            registration=(item.get("registration") or "").strip()
+                            if registration and c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
+                                skipped+=1; continue
+                            if not registration:
+                                number=c.execute("SELECT COALESCE(MAX(id),0)+1 FROM readers").fetchone()[0]
+                                registration="ALU-AUTO-%06d"%number
+                                while c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
+                                    number+=1; registration="ALU-AUTO-%06d"%number
+                            try: goal=int(float(item.get("reading_goal") or 12))
+                            except (ValueError,TypeError): goal=12
+                            goal=min(500,max(1,goal))
+                            c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
+                                (name,registration,(item.get("class_name") or "").strip(),(item.get("phone") or "").strip(),goal))
+                            reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(registration,)).fetchone()[0]
+                            log_action("IMPORTACAO","leitor",reader_id,"Leitor importado de "+item.get("_source","documento"))
+                        imported+=1
+                    except sqlite3.IntegrityError as exc:
+                        skipped+=1
+                        issues.append(item.get("_source","Documento")+": registro ignorado ("+str(exc)+").")
+            self.refresh()
+            self.doc_import_summary.configure(text="Importação concluída. Importados: %d · Ignorados por duplicidade ou dados inválidos: %d%s"%(imported,skipped,("\n"+ "\n".join(issues[:8])) if issues else ""),text_color=self.GREEN)
+            messagebox.showinfo("Importação concluída","Importados: %d\nIgnorados: %d\n\nOs dados já estão no banco local do Libris."%(imported,skipped))
+            self._document_records=[]
+            self.fill(self.doc_import_table,[])
+        except sqlite3.Error as exc:
+            messagebox.showerror("Importação","Erro ao gravar os registros: "+str(exc))
 
     def import_csv(self,kind):
         path=filedialog.askopenfilename(title="Importar dados CSV",filetypes=[("Arquivos CSV","*.csv"),("Todos os arquivos","*.*")])
