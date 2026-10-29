@@ -1,8 +1,8 @@
-import os, sys, sqlite3, socket, threading, webbrowser
+import os, sys, sqlite3, socket, threading, webbrowser, csv, shutil
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import customtkinter as ctk
 try:
     import qrcode
@@ -26,16 +26,100 @@ def connect():
 def init_db():
     with connect() as c:
         c.executescript("""
-        CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY,title TEXT NOT NULL,author TEXT DEFAULT '',isbn TEXT UNIQUE,category TEXT DEFAULT '',column_code TEXT DEFAULT '',shelf_row INTEGER);
-        CREATE TABLE IF NOT EXISTS readers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,registration TEXT UNIQUE,phone TEXT DEFAULT '');
-        CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY,book_id INTEGER NOT NULL REFERENCES books(id),reader_id INTEGER NOT NULL REFERENCES readers(id),loan_date TEXT NOT NULL,due_date TEXT NOT NULL,returned_at TEXT);
+        CREATE TABLE IF NOT EXISTS books(
+            id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT DEFAULT '',
+            isbn TEXT, category TEXT DEFAULT '', column_code TEXT DEFAULT '',
+            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom'
+        );
+        CREATE TABLE IF NOT EXISTS readers(
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, registration TEXT UNIQUE,
+            phone TEXT DEFAULT '', class_name TEXT DEFAULT '', reading_goal INTEGER DEFAULT 12
+        );
+        CREATE TABLE IF NOT EXISTS loans(
+            id INTEGER PRIMARY KEY, book_id INTEGER NOT NULL REFERENCES books(id),
+            reader_id INTEGER NOT NULL REFERENCES readers(id), loan_date TEXT NOT NULL,
+            due_date TEXT NOT NULL, returned_at TEXT, renewals INTEGER DEFAULT 0, notes TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS reservations(
+            id INTEGER PRIMARY KEY, book_id INTEGER NOT NULL REFERENCES books(id),
+            reader_id INTEGER NOT NULL REFERENCES readers(id), request_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Na fila', notified_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS activity_log(
+            id INTEGER PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL,
+            entity_id INTEGER, description TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """)
-        # Migração segura para bancos criados em versões anteriores.
-        columns = {row["name"] for row in c.execute("PRAGMA table_info(books)").fetchall()}
-        if "column_code" not in columns:
-            c.execute("ALTER TABLE books ADD COLUMN column_code TEXT DEFAULT ''")
-        if "shelf_row" not in columns:
-            c.execute("ALTER TABLE books ADD COLUMN shelf_row INTEGER")
+    migrate_schema()
+
+def migrate_schema():
+    # Remove a antiga restrição UNIQUE do ISBN para permitir vários exemplares da mesma edição.
+    c=sqlite3.connect(DB); c.row_factory=sqlite3.Row
+    c.execute("PRAGMA foreign_keys=OFF")
+    c.execute("PRAGMA legacy_alter_table=ON")
+    cols={row["name"] for row in c.execute("PRAGMA table_info(books)").fetchall()}
+    unique_isbn=False
+    for idx in c.execute("PRAGMA index_list(books)").fetchall():
+        if idx["unique"]:
+            idxcols=[r["name"] for r in c.execute("PRAGMA index_info('%s')" % idx["name"].replace("'","''")).fetchall()]
+            if idxcols==["isbn"]:
+                unique_isbn=True
+                break
+    if unique_isbn:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("ALTER TABLE books RENAME TO books_legacy_migration")
+        c.execute("""CREATE TABLE books(
+            id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT DEFAULT '',
+            isbn TEXT, category TEXT DEFAULT '', column_code TEXT DEFAULT '',
+            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom'
+        )""")
+        oldcols={row["name"] for row in c.execute("PRAGMA table_info(books_legacy_migration)").fetchall()}
+        fields=["id","title","author","isbn","category","column_code","shelf_row","accession_code","condition_status"]
+        common=[name for name in fields if name in oldcols]
+        names=",".join(common)
+        c.execute("INSERT INTO books (%s) SELECT %s FROM books_legacy_migration" % (names,names))
+        c.execute("DROP TABLE books_legacy_migration")
+        c.commit()
+    c.execute("BEGIN IMMEDIATE")
+    migrations={
+        "books":{"column_code":"TEXT DEFAULT ''","shelf_row":"INTEGER","accession_code":"TEXT","condition_status":"TEXT DEFAULT 'Bom'"},
+        "readers":{"class_name":"TEXT DEFAULT ''","reading_goal":"INTEGER DEFAULT 12"},
+        "loans":{"renewals":"INTEGER DEFAULT 0","notes":"TEXT DEFAULT ''"},
+    }
+    for table, additions in migrations.items():
+        existing={row["name"] for row in c.execute("PRAGMA table_info(%s)" % table).fetchall()}
+        for name, definition in additions.items():
+            if name not in existing:
+                c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table,name,definition))
+    c.execute("UPDATE books SET condition_status='Bom' WHERE condition_status IS NULL OR trim(condition_status)=''")
+    c.execute("UPDATE books SET accession_code='LIB-' || printf('%06d',id) WHERE accession_code IS NULL OR trim(accession_code)=''")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_books_accession_code ON books(accession_code) WHERE accession_code IS NOT NULL")
+    c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('loan_days','14')")
+    c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('max_renewals','2')")
+    c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('school_name','Biblioteca Escolar')")
+    c.commit()
+    c.execute("PRAGMA foreign_keys=ON")
+    errors=c.execute("PRAGMA foreign_key_check").fetchall()
+    c.close()
+    if errors:
+        raise RuntimeError("Migração do banco encontrou referências inconsistentes; faça um backup antes de continuar.")
+
+def find_available_copy(c, identifier):
+    identifier=(identifier or "").strip()
+    if not identifier:
+        return None
+    return c.execute("""SELECT b.* FROM books b
+        WHERE (b.accession_code=? OR b.isbn=?)
+          AND COALESCE(b.condition_status,'Bom')='Bom'
+          AND NOT EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL)
+        ORDER BY CASE WHEN b.accession_code=? THEN 0 ELSE 1 END,b.id LIMIT 1""",
+        (identifier,identifier,identifier)).fetchone()
+
+def log_action(action, entity_type, entity_id, description):
+    with connect() as c:
+        c.execute("INSERT INTO activity_log(action,entity_type,entity_id,description,created_at) VALUES(?,?,?,?,?)",
+                  (action,entity_type,entity_id,description,datetime.now().isoformat(timespec="seconds")))
 def ip_address():
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     try: s.connect(("8.8.8.8",80)); return s.getsockname()[0]
