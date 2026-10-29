@@ -18,7 +18,7 @@ from typing import Any
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".csv", ".tsv", ".txt", ".xlsx", ".xls", ".ods", ".odt", ".json"}
 
 BOOK_FIELDS = ("title", "author", "isbn", "accession_code", "category", "column_code", "shelf_row", "condition_status")
-READER_FIELDS = ("name", "registration", "class_name", "phone", "reading_goal")
+READER_FIELDS = ("name", "class_name")
 
 ALIASES = {
     "books": {
@@ -33,18 +33,14 @@ ALIASES = {
     },
     "readers": {
         "name": ("nome", "nomecompleto", "nomealuno", "nomedoaluno", "aluno", "aluna", "estudante", "student", "name", "full name", "nomeleitor", "nomedoleitor"),
-        "registration": ("matricula", "matriculaescolar", "registro", "registroacademico", "ra", "idaluno", "codigoaluno", "codigoleitor", "registration", "studentid", "id", "numeroaluno"),
         "class_name": ("turma", "ano", "serie", "anoescolar", "turmaano", "class", "classroom", "grade", "classe", "serieano"),
-        "phone": ("telefone", "celular", "contato", "phone", "mobile", "whatsapp"),
-        "reading_goal": ("metaanual", "metadeleitura", "livrosmeta", "objetivoleitura", "readinggoal", "meta"),
     },
 }
 
 FIELD_LABELS = {
     "title": "Título", "author": "Autor", "isbn": "ISBN", "accession_code": "Tombo",
     "category": "Gênero", "column_code": "Coluna", "shelf_row": "Fileira",
-    "condition_status": "Condição", "name": "Nome", "registration": "Matrícula",
-    "class_name": "Turma", "phone": "Telefone", "reading_goal": "Meta anual",
+    "condition_status": "Condição", "name": "Nome", "class_name": "Turma",
 }
 
 
