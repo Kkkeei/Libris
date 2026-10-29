@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import tempfile
+import sys
 from pathlib import Path
 
 temporary_root = tempfile.mkdtemp(prefix="libris-smoke-")
@@ -37,6 +38,7 @@ VALUES(1,1,1,'2026-10-01','2026-10-15',NULL);
 legacy.commit()
 legacy.close()
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
 
 app.init_db()
