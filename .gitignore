@@ -1,46 +1,5 @@
-# Node / Vite
-node_modules/
-dist/
-dist-student/
-dist-admin/
-dist-ssr/
-*.local
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-# Python
+.venv/
 __pycache__/
 *.py[cod]
-*.egg-info/
-.venv/
-venv/
-.pytest_cache/
-.coverage
-htmlcov/
-.ruff_cache/
-
-# Environment secrets
-.env
-.env.*
-!.env.example
-backend/.env
-frontend/.env
-
-# Persistent private data and backups
 data/
-*.db
-*.sqlite
-*.sqlite3
-*.db-journal
-*.sqlite-wal
-*.sqlite-shm
-backups/
-*.bak
-
-# Logs and editor files
-*.log
-logs/
-.vscode/
-.idea/
-.DS_Store
+.env

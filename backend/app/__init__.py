@@ -1,1 +1,0 @@
-"""Libris API application package."""
