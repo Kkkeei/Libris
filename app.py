@@ -142,6 +142,8 @@ def make_web():
     <style>body{font:16px system-ui;background:#f2f5fa;color:#172033;margin:0}.wrap{max-width:540px;margin:auto;padding:20px}.card{background:white;border-radius:16px;padding:20px;margin:14px 0}input,button{font:inherit;box-sizing:border-box;width:100%;padding:12px;margin:6px 0;border-radius:9px;border:1px solid #ccd3df}button{background:#2449a5;color:white;border:0;font-weight:bold}.ok{color:green}.err{color:#b42318}</style>
     <div class=wrap><h1>📚 Libris</h1><p>Empréstimo pelo celular na mesma rede Wi-Fi.</p><div class=card><h3>Novo empréstimo</h3><form id=f><label>ISBN ou tombo do exemplar</label><input id=isbn required><label>Matrícula do leitor</label><input id=reg required><label>Devolução prevista</label><input id=due type=date required><button>Registrar empréstimo</button></form><p id=msg></p></div><div class=card><h3>Pesquisar livro</h3><input id=q placeholder="Título, autor ou ISBN"><button onclick=searchBook()>Pesquisar</button><div id=results></div></div></div>
     <script>document.getElementById('due').value=new Date(Date.now()+12096e5).toISOString().slice(0,10);document.getElementById('f').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/mobile-loan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({isbn:document.getElementById('isbn').value.trim(),registration:document.getElementById('reg').value.trim(),due:document.getElementById('due').value})});let j=await r.json();let m=document.getElementById('msg');m.className=j.ok?'ok':'err';m.textContent=j.message};async function searchBook(){let r=await fetch('/api/book?q='+encodeURIComponent(document.getElementById('q').value));let j=await r.json();document.getElementById('results').innerHTML=j.books.length?j.books.map(b=>'<p><b>'+b.title+'</b><br>'+b.author+' · '+(b.category||'Sem gênero')+' · Tombo '+(b.accession_code||'—')+' · Coluna '+(b.column_code||'—')+' / Fileira '+(b.shelf_row||'—')+' · '+(b.condition_status||'Bom')+'</p>').join(''):'Nenhum livro encontrado.'}</script></html>"""
+    loan_days=get_setting_int("loan_days",14)
+    page=page.replace("12096e5",str(loan_days*86400000))
     @web.get("/mobile")
     def mobile(): return render_template_string(page)
     @web.get("/api/book")
@@ -455,6 +457,16 @@ class Libris(ctk.CTk):
                 AND NOT EXISTS(SELECT 1 FROM loans old WHERE old.reader_id=? AND old.book_id=b.id)
                 ORDER BY (SELECT COUNT(*) FROM loans popular WHERE popular.book_id=b.id) DESC,b.title LIMIT 10""",
                 (genre,reader["id"])).fetchall()
+            if not rows:
+                rows=c.execute("""SELECT b.category,b.title,b.author,
+                    COALESCE(NULLIF(b.column_code,''),'—') || ' / ' || COALESCE(CAST(b.shelf_row AS TEXT),'—')
+                    FROM books b WHERE COALESCE(b.condition_status,'Bom')='Bom'
+                    AND NOT EXISTS(SELECT 1 FROM loans a WHERE a.book_id=b.id AND a.returned_at IS NULL)
+                    AND NOT EXISTS(SELECT 1 FROM loans old WHERE old.reader_id=? AND old.book_id=b.id)
+                    ORDER BY (SELECT COUNT(*) FROM loans h JOIN books hb ON hb.id=h.book_id
+                        WHERE h.reader_id=? AND h.returned_at IS NOT NULL AND lower(COALESCE(hb.category,''))=lower(COALESCE(b.category,''))) DESC,
+                        (SELECT COUNT(*) FROM loans popular WHERE popular.book_id=b.id) DESC,b.title LIMIT 10""",
+                    (reader["id"],reader["id"])).fetchall()
         self.fill(self.suggestion_table,rows)
         if not rows:
             messagebox.showinfo("Sugestões","Não há exemplares disponíveis e ainda não lidos no gênero "+str(genre)+" para este leitor.")
@@ -524,7 +536,7 @@ class Libris(ctk.CTk):
         for var,value in zip(self.bv,values):
             var.set("" if value is None else str(value))
         self.book_submit_btn.configure(text="Salvar alterações")
-        self.bv[0] and messagebox.showinfo("Editar exemplar","Os dados foram carregados no formulário. Altere os campos e clique em Salvar alterações.")
+        messagebox.showinfo("Editar exemplar","Os dados foram carregados no formulário. Altere os campos e clique em Salvar alterações.")
 
     def add_reader(self):
         vals=[v.get().strip() for v in self.rv]
@@ -599,6 +611,7 @@ class Libris(ctk.CTk):
                       (b["id"],r["id"],date.today().isoformat(),due.isoformat()))
             c.execute("UPDATE reservations SET status='Atendida' WHERE book_id=? AND reader_id=? AND status='Disponível para retirada'",(b["id"],r["id"]))
         log_action("EMPRESTIMO","livro",b["id"],"Tombo "+(b["accession_code"] or "")+" emprestado para "+r["name"])
+        self.lv[0].set("")
         self.refresh()
         messagebox.showinfo("Libris","Empréstimo registrado para %s. Tombo: %s" % (r["name"],b["accession_code"] or "—"))
 
