@@ -1,6 +1,5 @@
 # Libris Desktop — Biblioteca Escolar
-
-Aplicativo desktop para a rotina de biblioteca escolar, com interface moderna, base local SQLite e página móvel opcional para a rede interna da escola.
+O projeto é um projeto estudantil municipal de afogados da ingazeira - PE criado por mim com 14 anos, junto a minha professora orientadora, Gislene Laurenço, e bibliotecárias escolares, Eduarda Chalego e Paula Oliveira. Realizado na escola Centro de excelência municipal Dom João Jóse da Mota executado no contra-turno e nas aulas de robótica/informática e atualmente estando em desenvolvimento.
 
 ## O que já está implementado
 
