@@ -97,6 +97,7 @@ def migrate_schema():
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_books_accession_code ON books(accession_code) WHERE accession_code IS NOT NULL")
     c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('loan_days','14')")
     c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('max_renewals','2')")
+    c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('max_active_loans','5')")
     c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('school_name','Biblioteca Escolar')")
     c.commit()
     c.execute("PRAGMA foreign_keys=ON")
@@ -104,6 +105,14 @@ def migrate_schema():
     c.close()
     if errors:
         raise RuntimeError("Migração do banco encontrou referências inconsistentes; faça um backup antes de continuar.")
+
+def get_setting_int(key, default):
+    try:
+        with connect() as c:
+            row=c.execute("SELECT value FROM settings WHERE key=?",(key,)).fetchone()
+        return int(row[0]) if row else default
+    except (ValueError, sqlite3.Error):
+        return default
 
 def find_available_copy(c, identifier):
     identifier=(identifier or "").strip()
@@ -365,7 +374,7 @@ class Libris(ctk.CTk):
 
     def loan_ui(self,parent):
         self.section_title(parent,"Circulação de exemplares","Digite ou use um leitor de código de barras para informar o tombo ou ISBN.")
-        self.lv=[tk.StringVar(),tk.StringVar(),tk.StringVar(value=(date.today()+timedelta(days=14)).isoformat())]
+        self.lv=[tk.StringVar(),tk.StringVar(),tk.StringVar(value=(date.today()+timedelta(days=get_setting_int("loan_days",14))).isoformat())]
         self.form_card(parent,[("ISBN OU TOMBO DO EXEMPLAR",self.lv[0]),("MATRÍCULA DO LEITOR",self.lv[1]),("DEVOLUÇÃO (AAAA-MM-DD)",self.lv[2])],"＋  Registrar empréstimo",self.add_loan)
         actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(0,10))
         ctk.CTkLabel(actions,text="Histórico e situação dos empréstimos",text_color=self.INK,font=("Arial",14,"bold")).pack(side="left")
@@ -616,7 +625,7 @@ class Libris(ctk.CTk):
             if waiting:
                 messagebox.showwarning("Renovação","Há uma reserva aguardando este exemplar; ele deve ser devolvido para atender a fila.")
                 return
-            new_due=max(date.fromisoformat(loan["due_date"]),date.today())+timedelta(days=14)
+            new_due=max(date.fromisoformat(loan["due_date"]),date.today())+timedelta(days=get_setting_int("loan_days",14))
             c.execute("UPDATE loans SET due_date=?,renewals=renewals+1 WHERE id=?",(new_due.isoformat(),lid))
         log_action("RENOVACAO","emprestimo",lid,"Empréstimo renovado até "+new_due.isoformat())
         self.refresh()
@@ -700,6 +709,33 @@ class Libris(ctk.CTk):
         ctk.CTkButton(backup,text="⤓  Criar backup agora",command=self.backup_database,height=40,width=210).pack(anchor="w",padx=18,pady=(0,18))
         self.report_status=ctk.CTkLabel(parent,text="Os relatórios são gerados neste computador.",text_color=self.MUTED,font=("Arial",11))
         self.report_status.pack(anchor="w",pady=8)
+        policy=self.panel(parent); policy.pack(fill="x",pady=(10,18))
+        ctk.CTkLabel(policy,text="Política de circulação",text_color=self.INK,font=("Arial",16,"bold")).pack(anchor="w",padx=20,pady=(18,4))
+        ctk.CTkLabel(policy,text="Defina prazos e limites conforme o regulamento da escola.",text_color=self.MUTED,font=("Arial",11)).pack(anchor="w",padx=20,pady=(0,12))
+        self.policy_vars={key:tk.StringVar(value=str(get_setting_int(key,default))) for key,default in [("loan_days",14),("max_active_loans",5),("max_renewals",2)]}
+        fields=ctk.CTkFrame(policy,fg_color="transparent"); fields.pack(fill="x",padx=16,pady=(0,8))
+        for label,key in [("DIAS POR EMPRÉSTIMO","loan_days"),("LIMITE DE LIVROS POR LEITOR","max_active_loans"),("MÁXIMO DE RENOVAÇÕES","max_renewals")]:
+            cell=ctk.CTkFrame(fields,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=4)
+            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",9,"bold")).pack(anchor="w",pady=(0,5))
+            ctk.CTkEntry(cell,textvariable=self.policy_vars[key],height=36).pack(fill="x")
+        ctk.CTkButton(policy,text="Salvar política",command=self.save_policies,height=38,width=170).pack(anchor="w",padx=20,pady=(0,16))
+
+    def save_policies(self):
+        try:
+            days=int(self.policy_vars["loan_days"].get())
+            maximum=int(self.policy_vars["max_active_loans"].get())
+            renewals=int(self.policy_vars["max_renewals"].get())
+            if not 1<=days<=90 or not 1<=maximum<=20 or not 0<=renewals<=5:
+                raise ValueError()
+        except ValueError:
+            messagebox.showwarning("Política inválida","Use dias entre 1 e 90, limite entre 1 e 20 livros e renovações entre 0 e 5.")
+            return
+        with connect() as c:
+            c.executemany("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                          [("loan_days",str(days)),("max_active_loans",str(maximum)),("max_renewals",str(renewals))])
+        log_action("CONFIGURACAO","sistema",None,"Política de circulação atualizada")
+        self.report_status.configure(text="Política salva. Novos empréstimos e renovações usarão o novo prazo.",text_color=self.GREEN)
+        messagebox.showinfo("Política de circulação","Configurações salvas.")
 
     def export_report(self,kind):
         reports={
