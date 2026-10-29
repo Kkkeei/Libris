@@ -65,4 +65,23 @@ with app.connect() as connection:
     assert available is not None and available["accession_code"] == "LIB-SECOND"
     assert connection.execute("SELECT COUNT(*) FROM reservations").fetchone()[0] == 0
 
-print("OK: migração preservou livros, leitores e empréstimos; ISBN duplicado por exemplar foi validado.")
+# Exercise the mobile search/loan endpoints without opening a GUI or server port.
+from datetime import date, timedelta
+client = app.make_web().test_client()
+search_response = client.get("/api/book?q=9780000000001")
+assert search_response.status_code == 200
+assert any(row["accession_code"] == "LIB-SECOND" for row in search_response.get_json()["books"])
+loan_response = client.post("/api/mobile-loan", json={
+    "isbn": "9780000000001",
+    "registration": "ALU-001",
+    "due": (date.today() + timedelta(days=7)).isoformat(),
+})
+assert loan_response.status_code == 200, loan_response.get_json()
+assert "LIB-SECOND" in loan_response.get_json()["message"]
+with app.connect() as connection:
+    active_count = connection.execute(
+        "SELECT COUNT(*) FROM loans WHERE reader_id=1 AND returned_at IS NULL"
+    ).fetchone()[0]
+    assert active_count == 2
+
+print("OK: migração preserva histórico; ISBN duplicado, busca mobile e empréstimo mobile foram validados.")
