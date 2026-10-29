@@ -147,7 +147,10 @@ def make_web():
     @web.get("/api/book")
     def books_search():
         q=request.args.get("q","")
-        with connect() as c: rows=c.execute("SELECT title,author,isbn FROM books WHERE title LIKE ? OR author LIKE ? OR isbn LIKE ? ORDER BY title LIMIT 30",("%"+q+"%","%"+q+"%","%"+q+"%")).fetchall()
+        with connect() as c:
+            rows=c.execute("""SELECT title,author,isbn,accession_code,column_code,shelf_row,category,condition_status
+                FROM books WHERE title LIKE ? OR author LIKE ? OR isbn LIKE ? OR accession_code LIKE ?
+                ORDER BY title LIMIT 30""",("%"+q+"%","%"+q+"%","%"+q+"%","%"+q+"%")).fetchall()
         return jsonify(books=[dict(r) for r in rows])
     @web.post("/api/mobile-loan")
     def mobile_loan():
@@ -157,12 +160,21 @@ def make_web():
             if due<date.today(): raise ValueError()
         except ValueError: return jsonify(ok=False,message="Informe uma data de devolução válida."),400
         with connect() as c:
-            b=c.execute("SELECT * FROM books WHERE isbn=?",(isbn,)).fetchone(); r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
-            if not b: return jsonify(ok=False,message="ISBN não encontrado."),404
+            r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
             if not r: return jsonify(ok=False,message="Matrícula não encontrada."),404
-            if c.execute("SELECT 1 FROM loans WHERE book_id=? AND returned_at IS NULL",(b["id"],)).fetchone(): return jsonify(ok=False,message="Este livro já está emprestado."),409
+            b=find_available_copy(c,isbn)
+            if not b:
+                exists=c.execute("SELECT 1 FROM books WHERE isbn=? OR accession_code=?",(isbn,isbn)).fetchone()
+                if not exists: return jsonify(ok=False,message="ISBN ou tombo não encontrado."),404
+                return jsonify(ok=False,message="Nenhum exemplar disponível em boas condições."),409
+            active=c.execute("SELECT COUNT(*) FROM loans WHERE reader_id=? AND returned_at IS NULL",(r["id"],)).fetchone()[0]
+            limit_row=c.execute("SELECT value FROM settings WHERE key='max_active_loans'").fetchone()
+            maximum=int(limit_row[0]) if limit_row else 5
+            if active>=maximum: return jsonify(ok=False,message="O leitor atingiu o limite de empréstimos ativos."),409
             c.execute("INSERT INTO loans(book_id,reader_id,loan_date,due_date) VALUES(?,?,?,?)",(b["id"],r["id"],date.today().isoformat(),due.isoformat()))
-        return jsonify(ok=True,message="Empréstimo registrado para "+r["name"]+".")
+            c.execute("UPDATE reservations SET status='Atendida' WHERE book_id=? AND reader_id=? AND status='Disponível para retirada'",(b["id"],r["id"]))
+        log_action("EMPRESTIMO","livro",b["id"],"Empréstimo mobile para "+r["name"]+"; tombo "+(b["accession_code"] or ""))
+        return jsonify(ok=True,message="Empréstimo registrado para "+r["name"]+" · tombo "+(b["accession_code"] or "")+".")
     return web
 
 class Libris(ctk.CTk):
