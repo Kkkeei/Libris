@@ -29,7 +29,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS books(
             id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT DEFAULT '',
             isbn TEXT, category TEXT DEFAULT '', column_code TEXT DEFAULT '',
-            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom'
+            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom',
+            last_inventory_at TEXT
         );
         CREATE TABLE IF NOT EXISTS readers(
             id INTEGER PRIMARY KEY, name TEXT NOT NULL, registration TEXT UNIQUE,
@@ -44,6 +45,10 @@ def init_db():
             id INTEGER PRIMARY KEY, book_id INTEGER NOT NULL REFERENCES books(id),
             reader_id INTEGER NOT NULL REFERENCES readers(id), request_date TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'Na fila', notified_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS inventory_scans(
+            id INTEGER PRIMARY KEY, book_id INTEGER NOT NULL REFERENCES books(id),
+            scanned_at TEXT NOT NULL, condition_status TEXT NOT NULL DEFAULT 'Bom'
         );
         CREATE TABLE IF NOT EXISTS activity_log(
             id INTEGER PRIMARY KEY, action TEXT NOT NULL, entity_type TEXT NOT NULL,
@@ -72,10 +77,11 @@ def migrate_schema():
         c.execute("""CREATE TABLE books(
             id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT DEFAULT '',
             isbn TEXT, category TEXT DEFAULT '', column_code TEXT DEFAULT '',
-            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom'
+            shelf_row INTEGER, accession_code TEXT UNIQUE, condition_status TEXT DEFAULT 'Bom',
+            last_inventory_at TEXT
         )""")
         oldcols={row["name"] for row in c.execute("PRAGMA table_info(books_legacy_migration)").fetchall()}
-        fields=["id","title","author","isbn","category","column_code","shelf_row","accession_code","condition_status"]
+        fields=["id","title","author","isbn","category","column_code","shelf_row","accession_code","condition_status","last_inventory_at"]
         common=[name for name in fields if name in oldcols]
         names=",".join(common)
         c.execute("INSERT INTO books (%s) SELECT %s FROM books_legacy_migration" % (names,names))
@@ -83,7 +89,7 @@ def migrate_schema():
         c.commit()
     c.execute("BEGIN IMMEDIATE")
     migrations={
-        "books":{"column_code":"TEXT DEFAULT ''","shelf_row":"INTEGER","accession_code":"TEXT","condition_status":"TEXT DEFAULT 'Bom'"},
+        "books":{"column_code":"TEXT DEFAULT ''","shelf_row":"INTEGER","accession_code":"TEXT","condition_status":"TEXT DEFAULT 'Bom'","last_inventory_at":"TEXT"},
         "readers":{"class_name":"TEXT DEFAULT ''","reading_goal":"INTEGER DEFAULT 12"},
         "loans":{"renewals":"INTEGER DEFAULT 0","notes":"TEXT DEFAULT ''"},
     }
