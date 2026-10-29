@@ -26,10 +26,16 @@ def connect():
 def init_db():
     with connect() as c:
         c.executescript("""
-        CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY,title TEXT NOT NULL,author TEXT DEFAULT '',isbn TEXT UNIQUE,category TEXT DEFAULT '');
+        CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY,title TEXT NOT NULL,author TEXT DEFAULT '',isbn TEXT UNIQUE,category TEXT DEFAULT '',column_code TEXT DEFAULT '',shelf_row INTEGER);
         CREATE TABLE IF NOT EXISTS readers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,registration TEXT UNIQUE,phone TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS loans(id INTEGER PRIMARY KEY,book_id INTEGER NOT NULL REFERENCES books(id),reader_id INTEGER NOT NULL REFERENCES readers(id),loan_date TEXT NOT NULL,due_date TEXT NOT NULL,returned_at TEXT);
         """)
+        # Migração segura para bancos criados em versões anteriores.
+        columns = {row["name"] for row in c.execute("PRAGMA table_info(books)").fetchall()}
+        if "column_code" not in columns:
+            c.execute("ALTER TABLE books ADD COLUMN column_code TEXT DEFAULT ''")
+        if "shelf_row" not in columns:
+            c.execute("ALTER TABLE books ADD COLUMN shelf_row INTEGER")
 def ip_address():
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     try: s.connect(("8.8.8.8",80)); return s.getsockname()[0]
@@ -232,10 +238,22 @@ class Libris(ctk.CTk):
         return card
 
     def book_ui(self,parent):
-        self.section_title(parent,"Catálogo de livros","Mantenha os títulos organizados e saiba o que está disponível.")
-        self.bv=[tk.StringVar() for _ in range(4)]
-        self.form_card(parent,[("TÍTULO",self.bv[0]),("AUTOR",self.bv[1]),("ISBN / CÓDIGO",self.bv[2]),("CATEGORIA",self.bv[3])],"＋  Adicionar",self.add_book)
-        self.btable=self.table(parent,("ID","Título","Autor","ISBN","Categoria","Situação"),height=13)
+        self.section_title(parent,"Catálogo de livros","Cadastre o livro e informe onde ele fica no acervo.")
+        self.bv=[tk.StringVar() for _ in range(6)]
+        card=self.panel(parent); card.pack(fill="x",pady=(0,16))
+        inner=ctk.CTkFrame(card,fg_color="transparent"); inner.pack(fill="x",padx=18,pady=16)
+        row1=ctk.CTkFrame(inner,fg_color="transparent"); row1.pack(fill="x",pady=(0,10))
+        for label,var in [("TÍTULO",self.bv[0]),("AUTOR",self.bv[1]),("ISBN / CÓDIGO",self.bv[2])]:
+            cell=ctk.CTkFrame(row1,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,10))
+            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",10,"bold")).pack(anchor="w",pady=(0,5))
+            ctk.CTkEntry(cell,textvariable=var,height=38,corner_radius=9,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
+        row2=ctk.CTkFrame(inner,fg_color="transparent"); row2.pack(fill="x")
+        for label,var,placeholder in [("COLUNA (LETRA)",self.bv[3],"Ex.: A"),("FILEIRA (NÚMERO)",self.bv[4],"Ex.: 3"),("GÊNERO",self.bv[5],"Ex.: Romance")]:
+            cell=ctk.CTkFrame(row2,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,10))
+            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",10,"bold")).pack(anchor="w",pady=(0,5))
+            ctk.CTkEntry(cell,textvariable=var,placeholder_text=placeholder,height=38,corner_radius=9,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
+        ctk.CTkButton(row2,text="＋  Adicionar livro",height=38,corner_radius=9,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",11,"bold"),command=self.add_book,width=155).pack(side="left",pady=(22,0))
+        self.btable=self.table(parent,("ID","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=11)
         self.btable.pack(fill="both",expand=True)
 
     def reader_ui(self,parent):
@@ -281,11 +299,29 @@ class Libris(ctk.CTk):
 
     def add_book(self):
         vals=[v.get().strip() for v in self.bv]
-        if not vals[0]: messagebox.showwarning("Atenção","Informe o título."); return
+        if not vals[0]:
+            messagebox.showwarning("Atenção","Informe o título.")
+            return
+        column=vals[3].upper()
+        if column and (len(column)>3 or not column.isalpha()):
+            messagebox.showwarning("Coluna inválida","Informe a coluna usando letras (ex.: A ou AB).")
+            return
         try:
-            with connect() as c: c.execute("INSERT INTO books(title,author,isbn,category) VALUES(?,?,?,?)",(vals[0],vals[1],vals[2] or None,vals[3]))
-        except sqlite3.IntegrityError: messagebox.showerror("Cadastro","ISBN já cadastrado."); return
-        [v.set("") for v in self.bv]; self.refresh()
+            shelf_row=int(vals[4]) if vals[4] else None
+            if shelf_row is not None and shelf_row < 1:
+                raise ValueError()
+        except ValueError:
+            messagebox.showwarning("Fileira inválida","Informe a fileira com um número inteiro maior que zero.")
+            return
+        try:
+            with connect() as c:
+                c.execute("INSERT INTO books(title,author,isbn,category,column_code,shelf_row) VALUES(?,?,?,?,?,?)",
+                          (vals[0],vals[1],vals[2] or None,vals[5],column,shelf_row))
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Cadastro","ISBN já cadastrado.")
+            return
+        [v.set("") for v in self.bv]
+        self.refresh()
 
     def add_reader(self):
         vals=[v.get().strip() for v in self.rv]
@@ -322,7 +358,7 @@ class Libris(ctk.CTk):
 
     def refresh(self):
         with connect() as c:
-            b=c.execute("SELECT b.id,b.title,b.author,COALESCE(b.isbn,''),b.category,CASE WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado' ELSE 'Disponível' END FROM books b ORDER BY b.title").fetchall()
+            b=c.execute("SELECT b.id,b.title,b.author,COALESCE(b.isbn,''),COALESCE(b.column_code,''),COALESCE(CAST(b.shelf_row AS TEXT),''),b.category,CASE WHEN EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL) THEN 'Emprestado' ELSE 'Disponível' END FROM books b ORDER BY b.title").fetchall()
             r=c.execute("SELECT id,name,registration,phone FROM readers ORDER BY name").fetchall()
             l=c.execute("SELECT l.id,b.title,r.name,l.loan_date,l.due_date,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date",(date.today().isoformat(),)).fetchall()
             counts=[c.execute("SELECT COUNT(*) FROM books").fetchone()[0],c.execute("SELECT COUNT(*) FROM readers").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL").fetchone()[0],c.execute("SELECT COUNT(*) FROM loans WHERE returned_at IS NULL AND due_date<?",(date.today().isoformat(),)).fetchone()[0]]
