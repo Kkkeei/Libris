@@ -1,6 +1,6 @@
 # Libris Desktop
 
-Aplicativo desktop de biblioteca feito em Python (Tkinter + SQLite), com painel visual e opção de empréstimo pelo celular via QR Code.
+Aplicativo desktop de biblioteca com interface moderna em CustomTkinter + SQLite, com painel visual e opção de empréstimo pelo celular via QR Code.
 
 ## Recursos
 - Cadastro de livros e leitores.
