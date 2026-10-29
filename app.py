@@ -878,7 +878,7 @@ class Libris(ctk.CTk):
         formats=self.panel(parent); formats.pack(fill="x",pady=(0,14))
         ctk.CTkLabel(formats,text="Formatos aceitos",text_color=self.INK,font=("Arial",14,"bold")).pack(anchor="w",padx=18,pady=(14,4))
         ctk.CTkLabel(formats,text="PDF com texto/tabelas · Word DOCX · Word DOC (com LibreOffice instalado) · Excel XLSX/XLS/ODS · OpenDocument ODT · CSV · TSV · TXT · JSON",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left").pack(anchor="w",padx=18,pady=(0,8))
-        ctk.CTkLabel(formats,text="Dica: cabeçalhos como Título, Autor, ISBN, Tombo, Gênero, Nome, Matrícula e Turma ajudam o Libris a identificar os campos automaticamente. PDFs digitalizados como imagem precisam de OCR antes da importação.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left").pack(anchor="w",padx=18,pady=(0,14))
+        ctk.CTkLabel(formats,text="Dica: para livros, use Título e Autor; para alunos, basta Nome e Turma. PDFs digitalizados como imagem precisam de OCR antes da importação.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left").pack(anchor="w",padx=18,pady=(0,14))
         preview=self.panel(parent); preview.pack(fill="both",expand=True,pady=(0,12))
         ctk.CTkLabel(preview,text="2. Confira os dados antes de importar",text_color=self.INK,font=("Arial",15,"bold")).pack(anchor="w",padx=18,pady=(16,4))
         self.doc_import_summary=ctk.CTkLabel(preview,text="A prévia aparecerá aqui após a leitura dos arquivos.",text_color=self.MUTED,font=("Arial",11),wraplength=950,justify="left")
@@ -894,7 +894,7 @@ class Libris(ctk.CTk):
     def export_import_template(self,kind):
         templates={
             "books":("modelo_importacao_livros.xlsx",["Título","Autor","ISBN","Tombo","Gênero","Coluna","Fileira","Condição"]),
-            "readers":("modelo_importacao_alunos.xlsx",["Nome","Matrícula","Turma","Telefone","Meta anual"]),
+            "readers":("modelo_importacao_alunos.xlsx",["Nome","Turma"]),
         }
         if kind not in templates:
             messagebox.showerror("Modelo","Tipo de modelo inválido.")
@@ -945,14 +945,13 @@ class Libris(ctk.CTk):
                         return "Duplicado"
                     seen.add(token)
                 return "Pronto" if accession else "Pronto · tombo automático"
-            registration=(record.get("registration") or "").strip()
-            if registration:
-                token=("matricula",registration.casefold())
-                if token in seen or c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
-                    return "Duplicado"
-                seen.add(token)
-                return "Pronto"
-            return "Pronto · matrícula automática"
+            name=(record.get("name") or "").strip().casefold()
+            class_name=(record.get("class_name") or "").strip().casefold()
+            token=("aluno",name,class_name)
+            if token in seen or c.execute("SELECT 1 FROM readers WHERE lower(trim(name))=? AND lower(trim(COALESCE(class_name,'')))=?",(name,class_name)).fetchone():
+                return "Duplicado"
+            seen.add(token)
+            return "Pronto"
 
     def analyze_document_files(self):
         if not self._document_paths:
@@ -994,16 +993,20 @@ class Libris(ctk.CTk):
         kind="books" if self.doc_import_kind.get()=="Livros" else "readers"
         rows=[]
         if kind=="books":
-            headings=("Arquivo","Resultado","Título","Autor","ISBN","Matrícula","Turma","Gênero","Coluna / Fileira","Tombo")
+            columns=("Arquivo","Resultado","Título","Autor","ISBN","Gênero","Coluna / Fileira","Tombo")
+            headings=("Arquivo","Resultado","Título","Autor","ISBN","Gênero","Coluna / Fileira","Tombo")
         else:
-            headings=("Arquivo","Resultado","Nome","—","—","Matrícula","Turma","—","Telefone","Meta anual")
-        for column,label in zip(self.doc_import_table["columns"],headings):
+            columns=("Arquivo","Resultado","Nome","Turma")
+            headings=("Arquivo","Resultado","Nome","Turma")
+        self.doc_import_table.configure(columns=columns)
+        for column,label in zip(columns,headings):
             self.doc_import_table.heading(column,text=label)
+            self.doc_import_table.column(column,width=130,minwidth=70,stretch=True)
         for item in self._document_records[:500]:
             if kind=="books":
-                rows.append((item.get("_source",""),item.get("_status",""),item.get("title",""),item.get("author",""),item.get("isbn",""),"", "",item.get("category",""),"%s / %s"%(item.get("column_code","") or "—",item.get("shelf_row","") or "—"),item.get("accession_code","") or "Automático"))
+                rows.append((item.get("_source",""),item.get("_status",""),item.get("title",""),item.get("author",""),item.get("isbn",""),item.get("category",""),"%s / %s"%(item.get("column_code","") or "—",item.get("shelf_row","") or "—"),item.get("accession_code","") or "Automático"))
             else:
-                rows.append((item.get("_source",""),item.get("_status",""),item.get("name",""),"","",item.get("registration","") or "Automática",item.get("class_name",""),"",item.get("phone",""),item.get("reading_goal","12")))
+                rows.append((item.get("_source",""),item.get("_status",""),item.get("name",""),item.get("class_name","")))
         self.fill(self.doc_import_table,rows)
         if len(self._document_records)>500:
             self.doc_import_summary.configure(text=self.doc_import_summary.cget("text")+"\nA tabela mostra as primeiras 500 linhas; a importação considera todos os registros válidos.")
@@ -1027,7 +1030,7 @@ class Libris(ctk.CTk):
         if not ready:
             messagebox.showinfo("Importação","Não existem registros novos para importar.")
             return
-        if not messagebox.askyesno("Confirmar importação","Importar %d registro(s) válidos? Os registros com tombo ou matrícula duplicados serão ignorados."%len(ready)):
+        if not messagebox.askyesno("Confirmar importação","Importar %d registro(s) válidos? Os registros duplicados serão ignorados."%len(ready)):
             return
         imported=0; skipped=0; issues=[]; activity_events=[]
         try:
@@ -1068,19 +1071,12 @@ class Libris(ctk.CTk):
                             name=(item.get("name") or "").strip()
                             if not name:
                                 skipped+=1; continue
-                            registration=(item.get("registration") or "").strip()
-                            if registration and c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
-                                skipped+=1; continue
-                            if not registration:
-                                number=c.execute("SELECT COALESCE(MAX(id),0)+1 FROM readers").fetchone()[0]
-                                registration="ALU-AUTO-%06d"%number
-                                while c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
-                                    number+=1; registration="ALU-AUTO-%06d"%number
-                            try: goal=int(float(item.get("reading_goal") or 12))
-                            except (ValueError,TypeError): goal=12
-                            goal=min(500,max(1,goal))
+                            number=c.execute("SELECT COALESCE(MAX(id),0)+1 FROM readers").fetchone()[0]
+                            registration="ALU-AUTO-%06d"%number
+                            while c.execute("SELECT 1 FROM readers WHERE registration=?",(registration,)).fetchone():
+                                number+=1; registration="ALU-AUTO-%06d"%number
                             c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
-                                (name,registration,(item.get("class_name") or "").strip(),(item.get("phone") or "").strip(),goal))
+                                (name,registration,(item.get("class_name") or "").strip(),"",12))
                             reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(registration,)).fetchone()[0]
                             activity_events.append(("leitor",reader_id,"Leitor importado de "+item.get("_source","documento")))
                         imported+=1
