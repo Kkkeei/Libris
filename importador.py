@@ -116,7 +116,7 @@ def _text_rows(text: str) -> list[list[str]] | list[dict[str, Any]]:
     if delimited and all(row is not None for row in delimited):
         return [row for row in delimited if row is not None]
     # Text extracted from PDFs often represents visual columns as multiple spaces.
-    spaced = [re.split(r"\\s{2,}", line) for line in lines]
+    spaced = [re.split(r"\s{2,}", line) for line in lines]
     if len(spaced) >= 2 and sum(len(row) > 1 for row in spaced) >= max(2, int(len(spaced) * 0.7)):
         width = max(len(row) for row in spaced)
         if width >= 2:
