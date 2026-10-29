@@ -223,11 +223,21 @@ class Libris(ctk.CTk):
         self.sidebar.pack(side="left",fill="y")
         self.sidebar.pack_propagate(False)
         brand=ctk.CTkFrame(self.sidebar,fg_color="transparent")
-        brand.pack(fill="x",padx=22,pady=(28,34))
-        ctk.CTkLabel(brand,text="L",width=42,height=42,corner_radius=13,fg_color=self.BLUE,text_color="white",font=("Arial",24,"bold")).pack(side="left")
+        brand.pack(fill="x",padx=18,pady=(24,30))
+        # Marca Libris: livro aberto com marcador amarelo, desenhada em vetor
+        # para manter a logo nítida sem depender de arquivos externos no executável.
+        mark=tk.Canvas(brand,width=54,height=54,bg=self.NAV,highlightthickness=0)
+        mark.pack(side="left")
+        mark.create_oval(2,2,52,52,fill="#1B2944",outline="")
+        mark.create_polygon(8,16,25,20,25,43,8,39,fill="#4568F5",outline="#8CB4FF",width=1.5)
+        mark.create_polygon(46,16,29,20,29,43,46,39,fill="#2449A5",outline="#8CB4FF",width=1.5)
+        for y in (25,31,37):
+            mark.create_line(12,y,22,y+2,fill="#EAF1FF",width=1.5)
+            mark.create_line(32,y+2,42,y,fill="#EAF1FF",width=1.5)
+        mark.create_polygon(27,7,34,7,34,25,30.5,22,27,25,fill="#FFC857",outline="#FFE4A0",width=1)
         words=ctk.CTkFrame(brand,fg_color="transparent")
-        words.pack(side="left",padx=11)
-        ctk.CTkLabel(words,text="libris",text_color="#FFFFFF",font=("Arial",23,"bold")).pack(anchor="w")
+        words.pack(side="left",padx=9)
+        ctk.CTkLabel(words,text="Libris",text_color="#FFFFFF",font=("Arial",24,"bold")).pack(anchor="w")
         ctk.CTkLabel(words,text="BIBLIOTECA DIGITAL",text_color="#9CA8C0",font=("Arial",9,"bold")).pack(anchor="w")
         ctk.CTkLabel(self.sidebar,text="MENU PRINCIPAL",text_color="#7D8AA4",font=("Arial",10,"bold")).pack(anchor="w",padx=24,pady=(0,10))
         navs=[("Visão geral","⌂"),("Livros","▤"),("Leitores","♙"),("Empréstimos","⇄"),("Reservas","◷"),("Importar arquivos","⇧"),("Leitura & ranking","✦"),("Relatórios","▦")]
