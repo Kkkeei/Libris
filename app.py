@@ -196,7 +196,7 @@ class Libris(ctk.CTk):
         ctk.CTkLabel(words,text="libris",text_color="#FFFFFF",font=("Arial",23,"bold")).pack(anchor="w")
         ctk.CTkLabel(words,text="BIBLIOTECA DIGITAL",text_color="#9CA8C0",font=("Arial",9,"bold")).pack(anchor="w")
         ctk.CTkLabel(self.sidebar,text="MENU PRINCIPAL",text_color="#7D8AA4",font=("Arial",10,"bold")).pack(anchor="w",padx=24,pady=(0,10))
-        navs=[("Visão geral","⌂"),("Livros","▤"),("Leitores","♙"),("Empréstimos","⇄"),("Ranking","✦")]
+        navs=[("Visão geral","⌂"),("Livros","▤"),("Leitores","♙"),("Empréstimos","⇄"),("Reservas","◷"),("Leitura & ranking","✦"),("Relatórios","▦")]
         for label,ico in navs:
             btn=ctk.CTkButton(self.sidebar,text=f"  {ico}     {label}",anchor="w",height=45,corner_radius=11,
                 fg_color="transparent",hover_color="#26334D",text_color="#D8DFEC",font=("Arial",13),
@@ -233,8 +233,12 @@ class Libris(ctk.CTk):
         self.reader_ui(self.pages["Leitores"])
         self.pages["Empréstimos"]=ctk.CTkFrame(self.content,fg_color="transparent")
         self.loan_ui(self.pages["Empréstimos"])
-        self.pages["Ranking"]=ctk.CTkFrame(self.content,fg_color="transparent")
-        self.rank_ui(self.pages["Ranking"])
+        self.pages["Reservas"]=ctk.CTkFrame(self.content,fg_color="transparent")
+        self.reservation_ui(self.pages["Reservas"])
+        self.pages["Leitura & ranking"]=ctk.CTkFrame(self.content,fg_color="transparent")
+        self.rank_ui(self.pages["Leitura & ranking"])
+        self.pages["Relatórios"]=ctk.CTkScrollableFrame(self.content,fg_color="transparent",corner_radius=0)
+        self.reports_ui(self.pages["Relatórios"])
 
     def show_page(self,name):
         if not hasattr(self,"pages"): return
@@ -322,29 +326,34 @@ class Libris(ctk.CTk):
         return card
 
     def book_ui(self,parent):
-        self.section_title(parent,"Catálogo de livros","Cadastre o livro e informe onde ele fica no acervo.")
-        self.bv=[tk.StringVar() for _ in range(6)]
-        card=self.panel(parent); card.pack(fill="x",pady=(0,16))
-        inner=ctk.CTkFrame(card,fg_color="transparent"); inner.pack(fill="x",padx=18,pady=16)
-        row1=ctk.CTkFrame(inner,fg_color="transparent"); row1.pack(fill="x",pady=(0,10))
-        for label,var in [("TÍTULO",self.bv[0]),("AUTOR",self.bv[1]),("ISBN / CÓDIGO",self.bv[2])]:
-            cell=ctk.CTkFrame(row1,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,10))
-            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",10,"bold")).pack(anchor="w",pady=(0,5))
-            ctk.CTkEntry(cell,textvariable=var,height=38,corner_radius=9,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
+        self.section_title(parent,"Acervo e localização","Cada exemplar recebe um tombo próprio; várias cópias podem compartilhar o mesmo ISBN.")
+        self.bv=[tk.StringVar() for _ in range(7)]
+        card=self.panel(parent); card.pack(fill="x",pady=(0,12))
+        inner=ctk.CTkFrame(card,fg_color="transparent"); inner.pack(fill="x",padx=16,pady=13)
+        row1=ctk.CTkFrame(inner,fg_color="transparent"); row1.pack(fill="x",pady=(0,8))
+        for label,var in [("TÍTULO",self.bv[0]),("AUTOR",self.bv[1]),("ISBN",self.bv[2]),("TOMBO / CÓDIGO DE BARRAS (opcional)",self.bv[3])]:
+            cell=ctk.CTkFrame(row1,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,8))
+            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",9,"bold")).pack(anchor="w",pady=(0,4))
+            ctk.CTkEntry(cell,textvariable=var,height=36,corner_radius=8,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
         row2=ctk.CTkFrame(inner,fg_color="transparent"); row2.pack(fill="x")
-        for label,var,placeholder in [("COLUNA (LETRA)",self.bv[3],"Ex.: A"),("FILEIRA (NÚMERO)",self.bv[4],"Ex.: 3"),("GÊNERO",self.bv[5],"Ex.: Romance")]:
-            cell=ctk.CTkFrame(row2,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,10))
-            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",10,"bold")).pack(anchor="w",pady=(0,5))
-            ctk.CTkEntry(cell,textvariable=var,placeholder_text=placeholder,height=38,corner_radius=9,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
-        ctk.CTkButton(row2,text="＋  Adicionar livro",height=38,corner_radius=9,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",11,"bold"),command=self.add_book,width=155).pack(side="left",pady=(22,0))
-        self.btable=self.table(parent,("ID","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=11)
+        for label,var,placeholder in [("COLUNA (LETRA)",self.bv[4],"A"),("FILEIRA (NÚMERO)",self.bv[5],"3"),("GÊNERO",self.bv[6],"Romance")]:
+            cell=ctk.CTkFrame(row2,fg_color="transparent"); cell.pack(side="left",fill="x",expand=True,padx=(0,8))
+            ctk.CTkLabel(cell,text=label,text_color=self.MUTED,font=("Arial",9,"bold")).pack(anchor="w",pady=(0,4))
+            ctk.CTkEntry(cell,textvariable=var,placeholder_text=placeholder,height=36,corner_radius=8,border_color="#DDE3EE",fg_color="#FBFCFE",text_color=self.INK).pack(fill="x")
+        ctk.CTkButton(row2,text="＋  Cadastrar exemplar",height=36,corner_radius=8,fg_color=self.BLUE,hover_color="#3453D5",font=("Arial",10,"bold"),command=self.add_book,width=160).pack(side="left",pady=(20,0))
+        self.btable=self.table(parent,("ID","Tombo","Título","Autor","ISBN","Coluna","Fileira","Gênero","Situação"),height=9)
         self.btable.pack(fill="both",expand=True)
+        actions=ctk.CTkFrame(parent,fg_color="transparent"); actions.pack(fill="x",pady=(8,0))
+        ctk.CTkLabel(actions,text="Selecione um exemplar para atualizar sua condição:",text_color=self.MUTED,font=("Arial",10)).pack(side="left")
+        ctk.CTkButton(actions,text="Em manutenção",width=120,height=32,command=lambda:self.set_book_condition("Em manutenção"),fg_color="#FFF0D9",hover_color="#FBE1B5",text_color="#8A5B13").pack(side="right",padx=4)
+        ctk.CTkButton(actions,text="Extraviado",width=100,height=32,command=lambda:self.set_book_condition("Extraviado"),fg_color="#FCE8EA",hover_color="#F7D1D5",text_color="#A52C3D").pack(side="right",padx=4)
+        ctk.CTkButton(actions,text="Marcar como bom",width=120,height=32,command=lambda:self.set_book_condition("Bom"),fg_color="#E2F5EC",hover_color="#C8EBDD",text_color="#117452").pack(side="right",padx=4)
 
     def reader_ui(self,parent):
-        self.section_title(parent,"Leitores","Gerencie o cadastro de pessoas que utilizam a biblioteca.")
-        self.rv=[tk.StringVar() for _ in range(3)]
-        self.form_card(parent,[("NOME COMPLETO",self.rv[0]),("MATRÍCULA",self.rv[1]),("TELEFONE",self.rv[2])],"＋  Adicionar",self.add_reader)
-        self.rtable=self.table(parent,("ID","Nome","Matrícula","Telefone"),height=14)
+        self.section_title(parent,"Leitores e turmas","Organize os cadastros por turma e acompanhe uma meta anual de leitura.")
+        self.rv=[tk.StringVar() for _ in range(5)]
+        self.form_card(parent,[("NOME COMPLETO",self.rv[0]),("MATRÍCULA",self.rv[1]),("TURMA / ANO",self.rv[2]),("TELEFONE",self.rv[3]),("META ANUAL (livros)",self.rv[4])],"＋  Cadastrar leitor",self.add_reader)
+        self.rtable=self.table(parent,("ID","Nome","Matrícula","Turma","Telefone","Meta anual"),height=13)
         self.rtable.pack(fill="both",expand=True)
 
     def loan_ui(self,parent):
@@ -384,36 +393,56 @@ class Libris(ctk.CTk):
     def add_book(self):
         vals=[v.get().strip() for v in self.bv]
         if not vals[0]:
-            messagebox.showwarning("Atenção","Informe o título.")
+            messagebox.showwarning("Cadastro","Informe o título do livro.")
             return
-        column=vals[3].upper()
+        column=vals[4].upper()
         if column and (len(column)>3 or not column.isalpha()):
-            messagebox.showwarning("Coluna inválida","Informe a coluna usando letras (ex.: A ou AB).")
+            messagebox.showwarning("Localização inválida","A coluna deve conter letras, por exemplo A ou AB.")
             return
         try:
-            shelf_row=int(vals[4]) if vals[4] else None
-            if shelf_row is not None and shelf_row < 1:
-                raise ValueError()
+            shelf_row=int(vals[5]) if vals[5] else None
+            if shelf_row is not None and shelf_row<1: raise ValueError()
         except ValueError:
-            messagebox.showwarning("Fileira inválida","Informe a fileira com um número inteiro maior que zero.")
+            messagebox.showwarning("Localização inválida","A fileira deve ser um número inteiro positivo.")
             return
+        accession=vals[3].upper() if vals[3] else ""
         try:
             with connect() as c:
-                c.execute("INSERT INTO books(title,author,isbn,category,column_code,shelf_row) VALUES(?,?,?,?,?,?)",
-                          (vals[0],vals[1],vals[2] or None,vals[5],column,shelf_row))
+                if not accession:
+                    accession="LIB-%06d" % c.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                c.execute("""INSERT INTO books(title,author,isbn,category,column_code,shelf_row,accession_code,condition_status)
+                    VALUES(?,?,?,?,?,?,?,'Bom')""",(vals[0],vals[1],vals[2] or None,vals[6],column,shelf_row,accession))
+                book_id=c.execute("SELECT id FROM books WHERE accession_code=?",(accession,)).fetchone()[0]
+            log_action("CADASTRO","livro",book_id,"Exemplar cadastrado: "+vals[0]+" · tombo "+accession)
         except sqlite3.IntegrityError:
-            messagebox.showerror("Cadastro","ISBN já cadastrado.")
+            messagebox.showerror("Cadastro","Esse tombo já existe. Use outro código de exemplar.")
             return
         [v.set("") for v in self.bv]
         self.refresh()
 
     def add_reader(self):
         vals=[v.get().strip() for v in self.rv]
-        if not vals[0] or not vals[1]: messagebox.showwarning("Atenção","Informe nome e matrícula."); return
+        if not vals[0] or not vals[1]:
+            messagebox.showwarning("Cadastro","Informe nome e matrícula.")
+            return
         try:
-            with connect() as c: c.execute("INSERT INTO readers(name,registration,phone) VALUES(?,?,?)",vals)
-        except sqlite3.IntegrityError: messagebox.showerror("Cadastro","Matrícula já cadastrada."); return
-        [v.set("") for v in self.rv]; self.refresh()
+            goal=int(vals[4] or "12")
+            if goal<1 or goal>500: raise ValueError()
+        except ValueError:
+            messagebox.showwarning("Meta de leitura","Informe uma meta anual entre 1 e 500 livros.")
+            return
+        try:
+            with connect() as c:
+                c.execute("INSERT INTO readers(name,registration,class_name,phone,reading_goal) VALUES(?,?,?,?,?)",
+                          (vals[0],vals[1],vals[2],vals[3],goal))
+                reader_id=c.execute("SELECT id FROM readers WHERE registration=?",(vals[1],)).fetchone()[0]
+            log_action("CADASTRO","leitor",reader_id,"Leitor cadastrado: "+vals[0]+" · turma "+(vals[2] or "não informada"))
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Cadastro","Matrícula já cadastrada.")
+            return
+        [v.set("") for v in self.rv]
+        self.rv[4].set("12")
+        self.refresh()
 
     def add_loan(self):
         isbn,reg,due_s=[v.get().strip() for v in self.lv]
