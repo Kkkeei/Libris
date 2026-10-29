@@ -120,7 +120,7 @@ def get_setting_int(key, default):
     except (ValueError, sqlite3.Error):
         return default
 
-def find_available_copy(c, identifier):
+def find_available_copy(c, identifier, reader_id=None):
     identifier=(identifier or "").strip()
     if not identifier:
         return None
@@ -128,8 +128,12 @@ def find_available_copy(c, identifier):
         WHERE (b.accession_code=? OR b.isbn=?)
           AND COALESCE(b.condition_status,'Bom')='Bom'
           AND NOT EXISTS(SELECT 1 FROM loans l WHERE l.book_id=b.id AND l.returned_at IS NULL)
-        ORDER BY CASE WHEN b.accession_code=? THEN 0 ELSE 1 END,b.id LIMIT 1""",
-        (identifier,identifier,identifier)).fetchone()
+          AND NOT EXISTS(SELECT 1 FROM reservations q WHERE q.book_id=b.id
+              AND q.status='Disponível para retirada' AND (? IS NULL OR q.reader_id!=?))
+        ORDER BY CASE WHEN EXISTS(SELECT 1 FROM reservations own WHERE own.book_id=b.id
+                     AND own.reader_id=? AND own.status='Disponível para retirada') THEN 0 ELSE 1 END,
+                 CASE WHEN b.accession_code=? THEN 0 ELSE 1 END,b.id LIMIT 1""",
+        (identifier,identifier,reader_id,reader_id,reader_id,identifier)).fetchone()
 
 def log_action(action, entity_type, entity_id, description):
     with connect() as c:
@@ -170,7 +174,7 @@ def make_web():
         with connect() as c:
             r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
             if not r: return jsonify(ok=False,message="Matrícula não encontrada."),404
-            b=find_available_copy(c,isbn)
+            b=find_available_copy(c,isbn,r["id"])
             if not b:
                 exists=c.execute("SELECT 1 FROM books WHERE isbn=? OR accession_code=?",(isbn,isbn)).fetchone()
                 if not exists: return jsonify(ok=False,message="ISBN ou tombo não encontrado."),404
@@ -598,14 +602,14 @@ class Libris(ctk.CTk):
             messagebox.showwarning("Data inválida","Informe a data no formato AAAA-MM-DD.")
             return
         with connect() as c:
-            b=find_available_copy(c,identifier)
             r=c.execute("SELECT * FROM readers WHERE registration=?",(reg,)).fetchone()
+            if not r:
+                messagebox.showerror("Empréstimo","Matrícula não encontrada.")
+                return
+            b=find_available_copy(c,identifier,r["id"])
             if not b:
                 exists=c.execute("SELECT 1 FROM books WHERE isbn=? OR accession_code=?",(identifier,identifier)).fetchone()
                 messagebox.showerror("Empréstimo","Nenhum exemplar disponível em boas condições." if exists else "ISBN ou tombo não encontrado.")
-                return
-            if not r:
-                messagebox.showerror("Empréstimo","Matrícula não encontrada.")
                 return
             active=c.execute("SELECT COUNT(*) FROM loans WHERE reader_id=? AND returned_at IS NULL",(r["id"],)).fetchone()[0]
             max_row=c.execute("SELECT value FROM settings WHERE key='max_active_loans'").fetchone()
@@ -837,7 +841,7 @@ class Libris(ctk.CTk):
 
     def export_report(self,kind):
         reports={
-            "books":("acervo.csv","SELECT accession_code AS Tombo,title AS Titulo,author AS Autor,isbn AS ISBN,column_code AS Coluna,shelf_row AS Fileira,category AS Genero,condition_status AS Condicao FROM books ORDER BY title,accession_code"),
+            "books":("acervo.csv","SELECT accession_code AS Tombo,title AS Titulo,author AS Autor,isbn AS ISBN,column_code AS Coluna,shelf_row AS Fileira,category AS Genero,condition_status AS Condicao,last_inventory_at AS Ultima_Conferencia FROM books ORDER BY title,accession_code"),
             "readers":("leitores_turmas.csv","SELECT name AS Nome,registration AS Matricula,class_name AS Turma,phone AS Telefone,reading_goal AS Meta_Anual FROM readers ORDER BY class_name,name"),
             "loans":("emprestimos_atrasos.csv","SELECT l.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,r.class_name AS Turma,l.loan_date AS Emprestimo,l.due_date AS Devolucao_Prevista,l.returned_at AS Devolvido,l.renewals AS Renovacoes,CASE WHEN l.returned_at IS NOT NULL THEN 'Devolvido' WHEN l.due_date<? THEN 'ATRASADO' ELSE 'Em aberto' END AS Status FROM loans l JOIN books b ON b.id=l.book_id JOIN readers r ON r.id=l.reader_id ORDER BY l.returned_at IS NULL DESC,l.due_date"),
             "reservations":("reservas.csv","SELECT q.id AS ID,b.accession_code AS Tombo,b.title AS Livro,r.name AS Leitor,r.registration AS Matricula,q.request_date AS Solicitada,q.status AS Status FROM reservations q JOIN books b ON b.id=q.book_id JOIN readers r ON r.id=q.reader_id ORDER BY q.request_date,q.id"),
