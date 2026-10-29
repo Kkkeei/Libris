@@ -48,6 +48,14 @@ FIELD_LABELS = {
 }
 
 
+def _value_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
 def normalized_key(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
     return "".join(ch for ch in text if ch.isalnum())
@@ -107,8 +115,13 @@ def _text_rows(text: str) -> list[list[str]] | list[dict[str, Any]]:
     delimited = [_split_delimited_line(line) for line in lines]
     if delimited and all(row is not None for row in delimited):
         return [row for row in delimited if row is not None]
-    # A plain list of book titles is a legitimate one-column import. Reader names
-    # are also accepted; the UI can assign a temporary/internal registration.
+    # Text extracted from PDFs often represents visual columns as multiple spaces.
+    spaced = [re.split(r"\\s{2,}", line) for line in lines]
+    if len(spaced) >= 2 and sum(len(row) > 1 for row in spaced) >= max(2, int(len(spaced) * 0.7)):
+        width = max(len(row) for row in spaced)
+        if width >= 2:
+            return [row for row in spaced if len(row) > 1]
+    # A plain list of book titles/names is a legitimate one-column import.
     return [[line] for line in lines]
 
 
@@ -257,8 +270,8 @@ def _map_record(source: dict[str, Any], kind: str) -> dict[str, Any]:
     for header, value in normalized_source.items():
         # Match by normalized label to avoid dependence on accents and punctuation.
         field = _canonical_field(header, kind)
-        if field and value is not None and str(value).strip():
-            mapped[field] = str(value).strip()
+        if field and _value_text(value):
+            mapped[field] = _value_text(value)
     return mapped
 
 
