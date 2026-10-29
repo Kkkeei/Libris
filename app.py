@@ -956,11 +956,17 @@ class Libris(ctk.CTk):
             return
         kind="books" if self.doc_import_kind.get()=="Livros" else "readers"
         rows=[]
+        if kind=="books":
+            headings=("Arquivo","Resultado","Título","Autor","ISBN","Matrícula","Turma","Gênero","Coluna / Fileira","Tombo")
+        else:
+            headings=("Arquivo","Resultado","Nome","—","—","Matrícula","Turma","—","Telefone","Meta anual")
+        for column,label in zip(self.doc_import_table["columns"],headings):
+            self.doc_import_table.heading(column,text=label)
         for item in self._document_records[:500]:
             if kind=="books":
                 rows.append((item.get("_source",""),item.get("_status",""),item.get("title",""),item.get("author",""),item.get("isbn",""),"", "",item.get("category",""),"%s / %s"%(item.get("column_code","") or "—",item.get("shelf_row","") or "—"),item.get("accession_code","") or "Automático"))
             else:
-                rows.append((item.get("_source",""),item.get("_status",""),item.get("name",""),"","",item.get("registration","") or "Automática",item.get("class_name",""),"", "", ""))
+                rows.append((item.get("_source",""),item.get("_status",""),item.get("name",""),"","",item.get("registration","") or "Automática",item.get("class_name",""),"",item.get("phone",""),item.get("reading_goal","12")))
         self.fill(self.doc_import_table,rows)
         if len(self._document_records)>500:
             self.doc_import_summary.configure(text=self.doc_import_summary.cget("text")+"\nA tabela mostra as primeiras 500 linhas; a importação considera todos os registros válidos.")
