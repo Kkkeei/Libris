@@ -1,51 +1,43 @@
 # Libris Desktop — Biblioteca Escolar
 
-O Libris é um sistema desktop para organizar uma biblioteca escolar, com banco de dados SQLite local e uma página móvel opcional para circulação na mesma rede Wi‑Fi.
+Aplicativo desktop para a rotina de biblioteca escolar, com interface moderna, base local SQLite e página móvel opcional para a rede interna da escola.
 
-## Funcionalidades
+## O que já está implementado
 
-### Acervo e localização física
-- Cadastro e edição de exemplares com título, autor, ISBN, gênero, coluna e fileira.
-- Tombo/código próprio por exemplar, gerado automaticamente quando não informado.
-- Suporte a múltiplas cópias com o mesmo ISBN.
-- Situação física: bom, em manutenção ou extraviado.
-- Busca móvel por título, autor, ISBN ou tombo, incluindo localização física do exemplar.
+### Acervo e localização
+- Cadastro, edição e pesquisa rápida por título, autor, ISBN, tombo, gênero ou localização.
+- Cada exemplar tem tombo próprio, gerado automaticamente quando não informado.
+- Várias cópias da mesma edição podem usar o mesmo ISBN.
+- Localização por coluna (letras) e fileira/prateleira (número).
+- Estado do exemplar: bom, em manutenção ou extraviado.
+- Importação de acervo por CSV e exportação para CSV compatível com Excel/LibreOffice.
+- Leitor de código de barras USB compatível com entrada de teclado: foco no campo de ISBN/tombo e leitura do código.
 
-### Leitores e leitura
-- Cadastro e edição de leitores, matrícula, turma/ano, telefone e meta anual de leitura.
-- Progresso anual com contagem de empréstimos devolvidos.
-- Sugestões de livros por gênero, histórico de empréstimos, popularidade e disponibilidade, sem recomendar exemplares já emprestados ou anteriormente emprestados àquele leitor.
+### Leitores e incentivo à leitura
+- Cadastro e edição de leitores com matrícula, turma/ano, telefone e meta anual.
+- Acompanhamento anual de empréstimos devolvidos em relação à meta de leitura.
+- Sugestões personalizadas por gênero e histórico, levando em conta popularidade, disponibilidade e exemplares já emprestados àquele leitor.
+- Importação de leitores/turmas por CSV.
 
-### Circulação
-- Empréstimos e devoluções com alerta de atraso.
-- Leitura de código de barras por leitor USB que simula teclado: informe o tombo no campo e o leitor preenche o código.
-- Seleção automática de exemplar disponível ao informar ISBN com cópias múltiplas.
-- Renovação com limite configurável e bloqueio quando existe reserva aguardando o exemplar.
-- Fila de reservas; ao devolver um exemplar reservado, o primeiro da fila muda para “Disponível para retirada”.
-- Limite de livros ativos por leitor e prazo padrão configuráveis.
+### Empréstimos, devoluções e reservas
+- Registro de empréstimo por ISBN ou tombo, selecionando exemplar disponível quando há cópias múltiplas.
+- Devolução, alerta de atraso e histórico de circulação.
+- Renovação com limite configurável; bloqueio da renovação quando há reserva pendente para o exemplar.
+- Fila de reservas: a devolução libera o exemplar para a primeira reserva, se ele estiver em boas condições.
+- Política de circulação configurável: prazo padrão, limite de livros ativos por leitor e máximo de renovações.
+- Página móvel acessível por QR Code, para pesquisar livros e registrar empréstimos pela rede Wi‑Fi local.
 
-### Relatórios e segurança de dados
-- Exportação CSV de acervo, leitores/turmas, empréstimos/atrasos e reservas (compatível com Excel e LibreOffice).
-- Backup do banco SQLite pela própria interface.
-- Registro local de ações relevantes para auditoria.
-- Migração automática do banco de versões anteriores, preservando cadastros e histórico durante a atualização da estrutura.
+### Operação e segurança
+- Painel com total de exemplares, leitores, empréstimos ativos e atrasos.
+- Ranking anual de leitura e livros mais emprestados.
+- Exportação de acervo, leitores/turmas, empréstimos/atrasos, reservas e histórico de ações.
+- Backup do banco de dados pela interface.
+- Log local de atividades relevantes.
+- Migração automática do banco de versões anteriores, preservando cadastros e histórico enquanto adiciona a nova estrutura.
 
-### Acesso móvel na rede local
-- Página acessível por QR Code na mesma rede Wi‑Fi para pesquisar acervo e registrar empréstimos.
-- A página móvel segue as regras de disponibilidade e limite de empréstimos configuradas no desktop.
-- O acesso móvel é voltado à rede interna da escola; não exponha a porta do aplicativo diretamente à internet.
-
-## Instalação e uso — Linux Mint
+## Linux Mint
 
 No diretório do projeto, execute:
-
-```bash
-./gerar_executavel_linux.sh
-```
-
-O executável será criado em `dist/Libris`. A base de dados fica separada do executável, em `~/.local/share/libris/libris.db` por padrão, para que uma atualização do programa não apague os registros.
-
-Para atualizar uma instalação existente sem apagar arquivos locais do projeto:
 
 ```bash
 git fetch origin
@@ -53,12 +45,18 @@ git reset --hard origin/main
 ./gerar_executavel_linux.sh
 ```
 
-Antes de atualizar em uma biblioteca em uso, faça um backup na tela **Relatórios**.
+O executável será criado em `dist/Libris`. A base fica fora da pasta do projeto, por padrão em `~/.local/share/libris/libris.db`, para que recriar o executável não apague os cadastros.
+
+**Antes da primeira atualização em uma biblioteca em uso:** abra **Relatórios** e crie um backup do banco. A migração é feita automaticamente, mas a cópia de segurança continua sendo a proteção mais importante.
 
 ## Windows
 
-Execute `gerar_executavel_windows.bat`. O executável será criado em `dist\Libris\Libris.exe`; o banco fica na pasta de dados do usuário.
+Execute `gerar_executavel_windows.bat`. O executável será criado em `dist\Libris\Libris.exe`.
+
+## Rede local e privacidade
+
+A página móvel foi pensada para dispositivos na mesma rede Wi‑Fi da biblioteca. Não exponha a porta do aplicativo diretamente à internet: o acesso móvel não é um portal com autenticação de usuários. Evite guardar dados pessoais que não sejam necessários à operação escolar.
 
 ## Validação
 
-O GitHub Actions compila sintaticamente `app.py` a cada atualização da branch principal. A validação de sintaxe não substitui um teste funcional da interface no computador da biblioteca.
+O GitHub Actions executa `python -m py_compile app.py` a cada atualização da branch principal. Isso valida a sintaxe; o funcionamento completo das telas e o processo de empacotamento ainda precisam ser conferidos no computador-alvo.
