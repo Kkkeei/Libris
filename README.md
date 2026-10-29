@@ -10,8 +10,10 @@ Aplicativo desktop para a rotina de biblioteca escolar, com interface moderna, b
 - Várias cópias da mesma edição podem usar o mesmo ISBN.
 - Localização por coluna (letras) e fileira/prateleira (número).
 - Estado do exemplar: bom, em manutenção ou extraviado.
+- Inventário físico por tombo/código de barras: cada leitura registra data e hora, exibe as últimas conferências e permite exportar o controle para CSV.
 - Importação de acervo por CSV e exportação para CSV compatível com Excel/LibreOffice.
 - Leitor de código de barras USB compatível com entrada de teclado: foco no campo de ISBN/tombo e leitura do código.
+- Empréstimos respeitam reservas liberadas: um exemplar reservado fica protegido para o leitor da fila, tanto no desktop como no celular.
 
 ### Leitores e incentivo à leitura
 - Cadastro e edição de leitores com matrícula, turma/ano, telefone e meta anual.
@@ -30,7 +32,7 @@ Aplicativo desktop para a rotina de biblioteca escolar, com interface moderna, b
 ### Operação e segurança
 - Painel com total de exemplares, leitores, empréstimos ativos e atrasos.
 - Ranking anual de leitura e livros mais emprestados.
-- Exportação de acervo, leitores/turmas, empréstimos/atrasos, reservas e histórico de ações.
+- Exportação de acervo, leitores/turmas, empréstimos/atrasos, reservas, histórico de ações e inventário físico.
 - Backup do banco de dados pela interface.
 - Log local de atividades relevantes.
 - Migração automática do banco de versões anteriores, preservando cadastros e histórico enquanto adiciona a nova estrutura.
